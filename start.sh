@@ -1,0 +1,1 @@
+gunicorn oneclinic_backend.wsgi:application

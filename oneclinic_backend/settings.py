@@ -1,16 +1,21 @@
 from pathlib import Path
 from dotenv import load_dotenv
 import os
+import dj_database_url
 
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-chave-temporaria-pode-mudar-depois')
+# ========================
+# SEGURANÇA
+# ========================
 
-DEBUG = True
+SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-dev')
 
-ALLOWED_HOSTS = ['*']
+DEBUG = os.getenv('DEBUG', 'False') == 'True'
+
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '*').split(',')
 
 # ========================
 # APPS
@@ -34,6 +39,10 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+
+    # STATIC EM PRODUÇÃO
+    'whitenoise.middleware.WhiteNoiseMiddleware',
+
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -42,7 +51,16 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
+# ========================
+# URLS / WSGI
+# ========================
+
 ROOT_URLCONF = 'oneclinic_backend.urls'
+WSGI_APPLICATION = 'oneclinic_backend.wsgi.application'
+
+# ========================
+# TEMPLATES
+# ========================
 
 TEMPLATES = [
     {
@@ -59,38 +77,45 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'oneclinic_backend.wsgi.application'
-
 # ========================
-# DATABASE (SUPABASE)
+# DATABASE
 # ========================
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv('DB_NAME'),
-        'USER': os.getenv('DB_USER'),
-        'PASSWORD': os.getenv('DB_PASSWORD'),
-        'HOST': os.getenv('DB_HOST'),
-        'PORT': os.getenv('DB_PORT'),
-        'OPTIONS': {
-            'sslmode': 'require',
+DATABASE_URL = os.getenv('DATABASE_URL')
+
+if DATABASE_URL:
+    DATABASES = {
+        'default': dj_database_url.parse(DATABASE_URL, conn_max_age=600)
+    }
+else:
+    # fallback local (se quiser usar .env separado)
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.getenv('DB_NAME'),
+            'USER': os.getenv('DB_USER'),
+            'PASSWORD': os.getenv('DB_PASSWORD'),
+            'HOST': os.getenv('DB_HOST'),
+            'PORT': os.getenv('DB_PORT'),
+            'OPTIONS': {
+                'sslmode': 'require',
+            }
         }
     }
-}
 
 # ========================
-# AUTH (PERSONALIZADA)
+# AUTH
 # ========================
 
 AUTH_USER_MODEL = 'core.Usuario'
 
 AUTHENTICATION_BACKENDS = [
     'core.backends.CPFBackend',
+    'django.contrib.auth.backends.ModelBackend',  # IMPORTANTE fallback admin
 ]
 
 # ========================
-# SENHAS (IMPORTANTE)
+# SENHAS
 # ========================
 
 PASSWORD_HASHERS = [
@@ -112,8 +137,26 @@ USE_I18N = True
 USE_TZ = True
 
 # ========================
-# STATIC
+# STATIC (OBRIGATÓRIO NO RENDER)
 # ========================
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+# ========================
+# DEFAULT FIELD
+# ========================
+
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# ========================
+# SEGURANÇA PRODUÇÃO
+# ========================
+
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True

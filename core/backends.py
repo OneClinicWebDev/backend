@@ -1,8 +1,8 @@
-from django.contrib.auth.backends import BaseBackend
+from django.contrib.auth.backends import ModelBackend
 from .models import Usuario
 
 
-class CPFBackend(BaseBackend):
+class CPFBackend(ModelBackend):
     def authenticate(self, request, username=None, password=None, **kwargs):
         cpf = username or kwargs.get("cpf")
 
@@ -14,7 +14,7 @@ class CPFBackend(BaseBackend):
         except Usuario.DoesNotExist:
             return None
 
-        if user.check_password(password) and user.is_active:
+        if user.check_password(password) and self.user_can_authenticate(user):
             return user
 
         return None
@@ -22,6 +22,7 @@ class CPFBackend(BaseBackend):
     def get_user(self, user_id):
         try:
             user = Usuario.objects.get(pk=user_id)
-            return user if user.is_active else None
         except Usuario.DoesNotExist:
             return None
+
+        return user if self.user_can_authenticate(user) else None

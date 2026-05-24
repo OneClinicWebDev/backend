@@ -1,9 +1,14 @@
-def has_role(user, role_name, clinica):
-    from core.models import Colaborador
+def has_role(request, role_name):
+    return getattr(request, "role", None) == role_name
 
-    return Colaborador.objects.filter(
-        usuario=user,
-        clinica=clinica,
-        role__nome=role_name,
-        ativo=True
-    ).exists()
+
+def is_admin(request):
+    return request.role == "ADMIN"
+
+
+def is_secretario(request):
+    return request.role == "SECRETARIO"
+
+
+def is_profissional(request):
+    return request.role == "PROFISSIONAL"

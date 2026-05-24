@@ -46,7 +46,6 @@ class Clinica(models.Model):
 
     class Meta:
         db_table = "clinicas"
-
 class Role(models.Model):
     ADMIN = "ADMIN"
     SECRETARIO = "SECRETARIO"
@@ -63,18 +62,6 @@ class Role(models.Model):
 
     class Meta:
         db_table = "roles"
-
-    def __str__(self):
-        return self.nome
-
-class ClinicaQuerySet(models.QuerySet):
-    def for_clinica(self, clinica_id):
-        return self.filter(clinica_id=clinica_id)
-
-
-class ClinicaManager(models.Manager):
-    def get_queryset(self):
-        return ClinicaQuerySet(self.model, using=self._db)
 
 class Colaborador(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -105,8 +92,6 @@ class Cliente(models.Model):
     status_financeiro = models.CharField(max_length=20, default="EM_DIA")
 
     created_at = models.DateTimeField(auto_now_add=True)
-
-    objects = ClinicaManager()
 
     class Meta:
         db_table = "clientes"

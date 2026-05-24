@@ -2,10 +2,6 @@ import uuid
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 
-
-# =========================
-# USER MANAGER
-# =========================
 class UsuarioManager(BaseUserManager):
     def create_user(self, cpf, password=None, **extra_fields):
         if not cpf:
@@ -24,9 +20,6 @@ class UsuarioManager(BaseUserManager):
         return self.create_user(cpf, password, **extra_fields)
 
 
-# =========================
-# USER
-# =========================
 class Usuario(AbstractBaseUser, PermissionsMixin):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     cpf = models.CharField(max_length=11, unique=True)
@@ -44,10 +37,6 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
     class Meta:
         db_table = "usuarios"
 
-
-# =========================
-# CLINICA
-# =========================
 class Clinica(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     cnpj = models.CharField(max_length=14, unique=True)
@@ -58,14 +47,19 @@ class Clinica(models.Model):
     class Meta:
         db_table = "clinicas"
 
-
-# =========================
-# ROLE (RBAC PRÓPRIO)
-# =========================
 class Role(models.Model):
+    ADMIN = "ADMIN"
+    SECRETARIO = "SECRETARIO"
+    PROFISSIONAL = "PROFISSIONAL"
+
+    ROLE_CHOICES = [
+        (ADMIN, "Admin"),
+        (SECRETARIO, "Secretário"),
+        (PROFISSIONAL, "Profissional"),
+    ]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    nome = models.CharField(max_length=50, unique=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    nome = models.CharField(max_length=20, choices=ROLE_CHOICES, unique=True)
 
     class Meta:
         db_table = "roles"
@@ -73,10 +67,15 @@ class Role(models.Model):
     def __str__(self):
         return self.nome
 
+class ClinicaQuerySet(models.QuerySet):
+    def for_clinica(self, clinica_id):
+        return self.filter(clinica_id=clinica_id)
 
-# =========================
-# COLABORADOR
-# =========================
+
+class ClinicaManager(models.Manager):
+    def get_queryset(self):
+        return ClinicaQuerySet(self.model, using=self._db)
+
 class Colaborador(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
@@ -92,10 +91,6 @@ class Colaborador(models.Model):
         db_table = "colaboradores"
         unique_together = ("usuario", "clinica")
 
-
-# =========================
-# CLIENTE
-# =========================
 class Cliente(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
@@ -111,11 +106,8 @@ class Cliente(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
 
+    objects = ClinicaManager()
+
     class Meta:
         db_table = "clientes"
         unique_together = ("usuario", "clinica")
-
-        permissions = [
-            ("can_view_all_clients", "Pode ver todos os clientes"),
-            ("can_manage_finance", "Pode gerenciar financeiro"),
-        ]

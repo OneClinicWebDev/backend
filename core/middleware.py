@@ -6,6 +6,7 @@ class ClinicaMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
+
         request.clinica = None
         request.role = None
 
@@ -13,7 +14,7 @@ class ClinicaMiddleware:
             colab = Colaborador.objects.filter(
                 usuario=request.user,
                 ativo=True
-            ).select_related("role", "clinica").first()
+            ).select_related("clinica", "role").first()
 
             if colab:
                 request.clinica = colab.clinica

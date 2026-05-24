@@ -2,6 +2,7 @@ import uuid
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 
+
 class UsuarioManager(BaseUserManager):
     def create_user(self, cpf, password=None, **extra_fields):
         if not cpf:
@@ -37,6 +38,7 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
     class Meta:
         db_table = "usuarios"
 
+
 class Clinica(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     cnpj = models.CharField(max_length=14, unique=True)
@@ -46,6 +48,8 @@ class Clinica(models.Model):
 
     class Meta:
         db_table = "clinicas"
+
+
 class Role(models.Model):
     ADMIN = "ADMIN"
     SECRETARIO = "SECRETARIO"
@@ -63,6 +67,7 @@ class Role(models.Model):
     class Meta:
         db_table = "roles"
 
+
 class Colaborador(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
@@ -77,6 +82,7 @@ class Colaborador(models.Model):
     class Meta:
         db_table = "colaboradores"
         unique_together = ("usuario", "clinica")
+
 
 class Cliente(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

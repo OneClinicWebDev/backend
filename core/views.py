@@ -1,43 +1,37 @@
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
 from .models import Cliente, Colaborador, Servico, Agendamento
 from .serializers import ClienteSerializer, ColaboradorSerializer, ServicoSerializer, AgendamentoSerializer
 
-class ClienteViewSet(viewsets.ModelViewSet):
+class BaseTenantViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated]
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        # Se o usuário mandou um ID de clínica no header/query, mas o middleware não encontrou a clínica (porque ele não pertence a ela)
+        clinica_id = request.headers.get("X-Clinica-ID")
+        if clinica_id and not request.clinica:
+            raise PermissionDenied("Você não tem permissão para acessar esta clínica.")
+
+    def get_queryset(self):
+        return self.queryset.filter(clinica=self.request.clinica)
+
+    def perform_create(self, serializer):
+        serializer.save(clinica=self.request.clinica)
+
+class ClienteViewSet(BaseTenantViewSet):
     serializer_class = ClienteSerializer
-    permission_classes = [IsAuthenticated]
+    queryset = Cliente.objects.all()
 
-    def get_queryset(self):
-        # Magia do Multi-Tenant: O usuário SÓ vê clientes da clínica atual dele
-        return Cliente.objects.filter(clinica=self.request.clinica)
-
-    def perform_create(self, serializer):
-        # Injeta a clínica automaticamente na hora de salvar
-        serializer.save(clinica=self.request.clinica)
-
-class ColaboradorViewSet(viewsets.ModelViewSet):
+class ColaboradorViewSet(BaseTenantViewSet):
     serializer_class = ColaboradorSerializer
-    permission_classes = [IsAuthenticated]
+    queryset = Colaborador.objects.all()
 
-    def get_queryset(self):
-        return Colaborador.objects.filter(clinica=self.request.clinica)
-
-class ServicoViewSet(viewsets.ModelViewSet):
+class ServicoViewSet(BaseTenantViewSet):
     serializer_class = ServicoSerializer
-    permission_classes = [IsAuthenticated]
+    queryset = Servico.objects.all()
 
-    def get_queryset(self):
-        return Servico.objects.filter(clinica=self.request.clinica)
-
-    def perform_create(self, serializer):
-        serializer.save(clinica=self.request.clinica)
-
-class AgendamentoViewSet(viewsets.ModelViewSet):
+class AgendamentoViewSet(BaseTenantViewSet):
     serializer_class = AgendamentoSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        return Agendamento.objects.filter(clinica=self.request.clinica)
-
-    def perform_create(self, serializer):
-        serializer.save(clinica=self.request.clinica)
+    queryset = Agendamento.objects.all()

@@ -1,5 +1,5 @@
+from django.http import JsonResponse
 from core.models import Colaborador
-
 
 class ClinicaMiddleware:
     def __init__(self, get_response):
@@ -21,14 +21,16 @@ class ClinicaMiddleware:
                 colaborador = Colaborador.objects.select_related("role", "clinica").get(
                     usuario=request.user,
                     clinica_id=clinica_id,
-                    ativo=True,
-                    clinica__ativo=True
+                    ativo=True
                 )
                 request.clinica = colaborador.clinica
                 request.colaborador = colaborador
                 request.role = colaborador.role.nome
             except Colaborador.DoesNotExist:
-                pass
+                return JsonResponse(
+                    {"detail": "Você não tem permissão para acessar esta clínica."}, 
+                    status=403
+                )
 
         response = self.get_response(request)
         return response

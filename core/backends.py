@@ -1,23 +1,30 @@
 from django.contrib.auth.backends import ModelBackend
+
 from .models import Usuario
 
 
 class CPFBackend(ModelBackend):
+
     def authenticate(self, request, username=None, password=None, **kwargs):
         cpf = username or kwargs.get("cpf")
 
-        if cpf is None or password is None:
+        if not cpf or not password:
             return None
+
+        cpf = "".join(filter(str.isdigit, str(cpf)))
 
         try:
             user = Usuario.objects.get(cpf=cpf)
         except Usuario.DoesNotExist:
             return None
 
-        if user.check_password(password) and self.user_can_authenticate(user):
-            return user
+        if not self.user_can_authenticate(user):
+            return None
 
-        return None
+        if not user.check_password(password):
+            return None
+
+        return user
 
     def get_user(self, user_id):
         try:
@@ -25,4 +32,7 @@ class CPFBackend(ModelBackend):
         except Usuario.DoesNotExist:
             return None
 
-        return user if self.user_can_authenticate(user) else None
+        if not self.user_can_authenticate(user):
+            return None
+
+        return user

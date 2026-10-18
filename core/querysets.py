@@ -1,6 +1,9 @@
+from django.db import models
+
+
 class ClinicaQuerySet(models.QuerySet):
     def for_request(self, request):
-        if not request.clinica:
+        if not hasattr(request, "clinica") or not request.clinica:
             return self.none()
 
         return self.filter(clinica=request.clinica)

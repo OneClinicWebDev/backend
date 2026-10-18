@@ -9,15 +9,25 @@ class LoginView(APIView):
     permission_classes = []
 
     def post(self, request):
-
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         user = serializer.validated_data["user"]
-
         refresh = RefreshToken.for_user(user)
 
-        colab = Colaborador.objects.filter(usuario=user).select_related("clinica", "role").first()
+        vinculos = Colaborador.objects.filter(
+            usuario=user, 
+            ativo=True
+        ).select_related("clinica", "role")
+
+        clinicas_disponiveis = [
+            {
+                "clinica_id": str(v.clinica.id),
+                "clinica_nome": v.clinica.nome_fantasia,
+                "role": v.role.nome,
+                "pode_editar_agenda": v.pode_editar_agenda
+            } for v in vinculos
+        ]
 
         return Response({
             "access": str(refresh.access_token),
@@ -27,6 +37,5 @@ class LoginView(APIView):
                 "cpf": user.cpf,
                 "nome": user.nome_completo
             },
-            "clinica": str(colab.clinica.id) if colab else None,
-            "role": colab.role.nome if colab else None
+            "vinculos": clinicas_disponiveis
         })

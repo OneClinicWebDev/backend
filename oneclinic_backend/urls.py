@@ -1,18 +1,16 @@
 from django.contrib import admin
-from django.http import HttpResponse
-from django.urls import include, path
-
-def home_view(request):
-    return HttpResponse(
-        """
-        <h1>OneClinic Backend</h1>
-        <p>API disponível em /api/</p>
-        <p>Admin disponível em /admin/</p>
-        """
-    )
+from django.urls import path, include
+from rest_framework_simplejwt.views import (
+    TokenObtainPairView,
+    TokenRefreshView,
+    TokenBlacklistView,
+)
 
 urlpatterns = [
-    path("", home_view),
-    path("admin/", admin.site.urls),
-    path("api/", include("core.api.urls")),
+
+    path('admin/', admin.site.urls),
+    path('api/', include('core.urls')),
+    path('api/token/', TokenObtainPairView.as_view(), name='login'),
+    path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('api/token/blacklist/', TokenBlacklistView.as_view(), name='logout'),
 ]

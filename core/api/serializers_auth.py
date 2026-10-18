@@ -1,7 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import authenticate
 
-
 class LoginSerializer(serializers.Serializer):
     cpf = serializers.CharField()
     password = serializers.CharField()
@@ -10,7 +9,7 @@ class LoginSerializer(serializers.Serializer):
         user = authenticate(username=data["cpf"], password=data["password"])
 
         if not user:
-            raise serializers.ValidationError("Credenciais inválidas")
+            raise serializers.ValidationError("Credenciais inválidas ou usuário inativo.")
 
         data["user"] = user
         return data

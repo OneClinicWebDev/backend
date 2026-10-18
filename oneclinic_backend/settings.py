@@ -29,6 +29,10 @@ REST_FRAMEWORK = {
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
+    "USER_ID_FIELD": "id",
+    "USER_ID_CLAIM": "user_id",
 }
 
 INSTALLED_APPS = [
@@ -41,18 +45,20 @@ INSTALLED_APPS = [
     'django.contrib.postgres',
     'rest_framework',
     'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
     'core',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'core.middleware.ClinicaMiddleware', 
 ]
 
 ROOT_URLCONF = 'oneclinic_backend.urls'
@@ -75,9 +81,9 @@ TEMPLATES = [
 DATABASE_URL = os.getenv('DATABASE_URL')
 
 if DATABASE_URL:
-    DATABASES = {
-        'default': dj_database_url.parse(DATABASE_URL, conn_max_age=600)
-    }
+    db_from_env = dj_database_url.parse(DATABASE_URL, conn_max_age=600)
+    db_from_env['TEST'] = {'NAME': 'test_oneclinic_novo'}  
+    DATABASES = {'default': db_from_env}
 else:
     DATABASES = {
         'default': {
@@ -88,6 +94,9 @@ else:
             'HOST': os.getenv('DB_HOST'),
             'PORT': os.getenv('DB_PORT'),
             'OPTIONS': {'sslmode': 'require'},
+            'TEST': {                                    
+                'NAME': 'test_oneclinic_novo',
+            },
         }
     }
 
@@ -104,7 +113,19 @@ PASSWORD_HASHERS = [
 ]
 
 AUTH_PASSWORD_VALIDATORS = [
-    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
+    {
+        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        'OPTIONS': {'min_length': 8}
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+    },
 ]
 
 LANGUAGE_CODE = 'pt-br'

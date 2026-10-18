@@ -1,6 +1,5 @@
 from rest_framework.test import APITestCase
 from rest_framework import status
-from django.urls import reverse
 from core.models import Usuario, Clinica, Colaborador, Role
 
 class SecurityTestCase(APITestCase):
@@ -27,14 +26,10 @@ class SecurityTestCase(APITestCase):
             telefone="11999999999"
         )
 
-        try:
-            self.login_url = reverse('login')
-            self.logout_url = reverse('logout')
-            self.clientes_url = reverse('cliente-list')
-        except:
-            self.login_url = '/api/token/'
-            self.logout_url = '/api/token/blacklist/'
-            self.clientes_url = '/api/clientes/'
+        self.login_url = '/api/token/'
+        self.logout_url = '/api/token/blacklist/'
+        self.refresh_url = '/api/token/refresh/'
+        self.clientes_url = '/api/clientes/'
 
     def test_login_retorna_tokens(self):
         response = self.client.post(self.login_url, {"cpf": "52998224025", "password": "SenhaForte123"})
@@ -43,24 +38,30 @@ class SecurityTestCase(APITestCase):
         self.assertIn('refresh', response.data)
 
     def test_logout_invalida_token_blacklist(self):
+        # 1. Faz login
         login_resp = self.client.post(self.login_url, {"cpf": "52998224025", "password": "SenhaForte123"})
         access_token = login_resp.data.get('access')
         refresh_token = login_resp.data.get('refresh')
 
+        # 2. Requisita clientes passando o token válido
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access_token}', HTTP_X_CLINICA_ID=str(self.clinica1.id))
-        resp_antes_logout = self.client.get(self.clientes_url)
-        self.assertNotEqual(resp_antes_logout.status_code, status.HTTP_401_UNAUTHORIZED)
+        resp_antes = self.client.get(self.clientes_url)
+        self.assertNotEqual(resp_antes.status_code, status.HTTP_401_UNAUTHORIZED)
 
+        # 3. Executa o Logout (envia o refresh token para a blacklist)
         logout_resp = self.client.post(self.logout_url, {"refresh": refresh_token})
         self.assertIn(logout_resp.status_code, [status.HTTP_200_OK, status.HTTP_205_RESET_CONTENT])
         
+        # 4. Prova real: Tentar usar o refresh token revogado deve retornar 401 Unauthorized
+        self.client.credentials()
+        refresh_resp = self.client.post(self.refresh_url, {"refresh": refresh_token})
+        self.assertEqual(refresh_resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
     def test_acesso_negado_clinica_isolada(self):
         login_resp = self.client.post(self.login_url, {"cpf": "52998224025", "password": "SenhaForte123"})
         access_token = login_resp.data.get('access')
 
-        # Tenta injetar o ID da Clínica 2 (onde ele NÃO é colaborador)
+        # Tenta acessar a Clínica 2 com o token da Clínica 1
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access_token}', HTTP_X_CLINICA_ID=str(self.clinica2.id))
         response = self.client.get(self.clientes_url)
-        
-        # Agora o middleware vai interceptar e retornar 403 Forbidden
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)

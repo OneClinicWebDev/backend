@@ -1,67 +1,157 @@
 from rest_framework.test import APITestCase
 from rest_framework import status
+
 from core.models import Usuario, Clinica, Colaborador, Role
+
 
 class SecurityTestCase(APITestCase):
     def setUp(self):
         self.clinica1 = Clinica.objects.create(
-            cnpj="48545800000100", 
-            razao_social="Clinica A", 
-            nome_fantasia="A", 
-            telefone="11999999999"
+            cnpj="48545800000100",
+            razao_social="Clinica A",
+            nome_fantasia="A",
+            telefone="11999999999",
         )
+
         self.user1 = Usuario.objects.create_user(
-            cpf="52998224025", 
-            nome_completo="Admin A", 
-            data_nascimento="1990-01-01", 
-            password="SenhaForte123"
+            cpf="52998224725",
+            nome_completo="Admin A",
+            data_nascimento="1990-01-01",
+            password="SenhaForte123",
         )
+
         role_admin = Role.objects.create(nome=Role.ADMIN)
-        Colaborador.objects.create(usuario=self.user1, clinica=self.clinica1, role=role_admin)
+
+        Colaborador.objects.create(
+            usuario=self.user1,
+            clinica=self.clinica1,
+            role=role_admin,
+            ativo=True,
+        )
 
         self.clinica2 = Clinica.objects.create(
-            cnpj="92135061000155", 
-            razao_social="Clinica B", 
-            nome_fantasia="B", 
-            telefone="11999999999"
+            cnpj="92135061000155",
+            razao_social="Clinica B",
+            nome_fantasia="B",
+            telefone="11999999999",
         )
 
-        self.login_url = '/api/token/'
-        self.logout_url = '/api/token/blacklist/'
-        self.refresh_url = '/api/token/refresh/'
-        self.clientes_url = '/api/clientes/'
+        self.login_url = "/api/token/"
+        self.logout_url = "/api/token/blacklist/"
+        self.refresh_url = "/api/token/refresh/"
+        self.clientes_url = "/api/clientes/"
+
+    def obter_tokens(self):
+        response = self.client.post(
+            self.login_url,
+            {
+                "cpf": "52998224725",
+                "password": "SenhaForte123",
+            },
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+            response.data,
+        )
+
+        self.assertIn("access", response.data)
+        self.assertIn("refresh", response.data)
+
+        return response.data
+
+    def autenticar_na_clinica(self, access_token, clinica_id):
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {access_token}",
+            HTTP_X_CLINICA_ID=str(clinica_id),
+        )
 
     def test_login_retorna_tokens(self):
-        response = self.client.post(self.login_url, {"cpf": "52998224025", "password": "SenhaForte123"})
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn('access', response.data)
-        self.assertIn('refresh', response.data)
+        tokens = self.obter_tokens()
 
-    def test_logout_invalida_token_blacklist(self):
-        # 1. Faz login
-        login_resp = self.client.post(self.login_url, {"cpf": "52998224025", "password": "SenhaForte123"})
-        access_token = login_resp.data.get('access')
-        refresh_token = login_resp.data.get('refresh')
+        self.assertTrue(tokens["access"])
+        self.assertTrue(tokens["refresh"])
 
-        # 2. Requisita clientes passando o token válido
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access_token}', HTTP_X_CLINICA_ID=str(self.clinica1.id))
-        resp_antes = self.client.get(self.clientes_url)
-        self.assertNotEqual(resp_antes.status_code, status.HTTP_401_UNAUTHORIZED)
+    def test_acesso_propria_clinica_com_jwt(self):
+        tokens = self.obter_tokens()
 
-        # 3. Executa o Logout (envia o refresh token para a blacklist)
-        logout_resp = self.client.post(self.logout_url, {"refresh": refresh_token})
-        self.assertIn(logout_resp.status_code, [status.HTTP_200_OK, status.HTTP_205_RESET_CONTENT])
-        
-        # 4. Prova real: Tentar usar o refresh token revogado deve retornar 401 Unauthorized
-        self.client.credentials()
-        refresh_resp = self.client.post(self.refresh_url, {"refresh": refresh_token})
-        self.assertEqual(refresh_resp.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.autenticar_na_clinica(
+            tokens["access"],
+            self.clinica1.id,
+        )
+
+        response = self.client.get(self.clientes_url)
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+            getattr(response, "data", None),
+        )
 
     def test_acesso_negado_clinica_isolada(self):
-        login_resp = self.client.post(self.login_url, {"cpf": "52998224025", "password": "SenhaForte123"})
-        access_token = login_resp.data.get('access')
+        tokens = self.obter_tokens()
 
-        # Tenta acessar a Clínica 2 com o token da Clínica 1
-        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access_token}', HTTP_X_CLINICA_ID=str(self.clinica2.id))
+        self.autenticar_na_clinica(
+            tokens["access"],
+            self.clinica2.id,
+        )
+
         response = self.client.get(self.clientes_url)
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_acesso_sem_clinica_selecionada_e_negado(self):
+        tokens = self.obter_tokens()
+
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {tokens['access']}",
+        )
+
+        response = self.client.get(self.clientes_url)
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_logout_invalida_refresh_token(self):
+        tokens = self.obter_tokens()
+
+        self.autenticar_na_clinica(
+            tokens["access"],
+            self.clinica1.id,
+        )
+
+        response_antes = self.client.get(self.clientes_url)
+
+        self.assertEqual(
+            response_antes.status_code,
+            status.HTTP_200_OK,
+            getattr(response_antes, "data", None),
+        )
+
+        logout_response = self.client.post(
+            self.logout_url,
+            {"refresh": tokens["refresh"]},
+        )
+
+        self.assertEqual(
+            logout_response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.client.credentials()
+
+        refresh_response = self.client.post(
+            self.refresh_url,
+            {"refresh": tokens["refresh"]},
+        )
+
+        self.assertEqual(
+            refresh_response.status_code,
+            status.HTTP_401_UNAUTHORIZED,
+        )

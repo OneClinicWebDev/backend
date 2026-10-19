@@ -1,8 +1,9 @@
+from django.db import transaction
+from django.utils import timezone
+
 from rest_framework import status, viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
-from django.db import transaction
-from django.utils import timezone
 
 from core.models import Colaborador, Role, Agendamento, Auditoria
 from .base import ClinicaContextMixin
@@ -15,88 +16,201 @@ class ColaboradorViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
     permission_classes = [IsAdmin]
 
     def get_queryset(self):
-        return Colaborador.objects.filter(
-            clinica=self.get_clinica()
-        ).select_related(
-            "usuario",
-            "clinica",
-            "role",
+        return (
+            Colaborador.objects.filter(clinica=self.get_clinica())
+            .select_related("usuario", "clinica", "role")
+        )
+
+    def _snapshot(self, colaborador):
+        return {
+            "usuario_id": str(colaborador.usuario_id),
+            "role": colaborador.role.nome,
+            "ativo": colaborador.ativo,
+            "pode_editar_agenda": colaborador.pode_editar_agenda,
+        }
+
+    def _registrar_auditoria(
+        self,
+        colaborador,
+        acao,
+        dados_anteriores=None,
+        dados_novos=None,
+    ):
+        ip = self.request.META.get("REMOTE_ADDR")
+        if ip and "," in ip:
+            ip = ip.split(",")[0].strip()
+
+        Auditoria.objects.create(
+            usuario=self.request.user,
+            clinica=colaborador.clinica,
+            acao=acao,
+            entidade="Colaborador",
+            objeto_id=str(colaborador.id),
+            dados_anteriores=dados_anteriores,
+            dados_novos=dados_novos,
+            origem="USUARIO",
+            ip=ip or None,
+            user_agent=self.request.META.get("HTTP_USER_AGENT", ""),
         )
 
     def _validar_desativacao_profissional(self, colaborador):
-        """Impede a desativação se houver agendamentos futuros (Regra 11.4)."""
-        if colaborador.role.nome == Role.PROFISSIONAL:
-            agendamentos_futuros = Agendamento.objects.filter(
-                profissional=colaborador,
-                status__in=[Agendamento.PENDENTE, Agendamento.CONFIRMADO],
-                data_hora_inicio__gt=timezone.now()
-            ).exists()
+        if colaborador.role.nome != Role.PROFISSIONAL:
+            return
 
-            if agendamentos_futuros:
-                raise ValidationError(
-                    "O profissional possui agendamentos futuros. "
-                    "Reatribua ou cancele os compromissos afetados antes de desativá-lo."
-                )
+        possui_agendamentos_futuros = Agendamento.objects.filter(
+            clinica=colaborador.clinica,
+            profissional=colaborador,
+            status__in=[
+                Agendamento.PENDENTE,
+                Agendamento.CONFIRMADO,
+            ],
+            data_hora_inicio__gt=timezone.now(),
+        ).exists()
+
+        if possui_agendamentos_futuros:
+            raise ValidationError(
+                "O profissional possui agendamentos futuros. "
+                "Reatribua ou cancele os compromissos afetados antes "
+                "de desativá-lo ou alterar sua função."
+            )
+
+    def _validar_regras_administrador(
+        self,
+        colaborador,
+        novo_role,
+        novo_ativo,
+    ):
+        if colaborador.role.nome != Role.ADMIN:
+            return
+
+        alterando_funcao = novo_role.nome != Role.ADMIN
+        desativando = not novo_ativo
+
+        if not alterando_funcao and not desativando:
+            return
+
+        eh_proprio_vinculo = (
+            colaborador.usuario_id == self.request.user.id
+        )
+
+        if not eh_proprio_vinculo:
+            raise PermissionDenied(
+                "Um administrador não pode desativar ou alterar "
+                "a função de outro administrador."
+            )
+
+        existe_outro_admin_ativo = Colaborador.objects.filter(
+            clinica=colaborador.clinica,
+            role__nome=Role.ADMIN,
+            ativo=True,
+        ).exclude(pk=colaborador.pk).exists()
+
+        if not existe_outro_admin_ativo:
+            raise PermissionDenied(
+                "Não é possível remover ou rebaixar o último "
+                "administrador ativo da clínica."
+            )
+
+    @transaction.atomic
+    def perform_create(self, serializer):
+        clinica = self.get_clinica()
+        colaborador = serializer.save(clinica=clinica)
+
+        self._registrar_auditoria(
+            colaborador,
+            Auditoria.CREATE,
+            dados_novos=self._snapshot(colaborador),
+        )
 
     @transaction.atomic
     def perform_update(self, serializer):
         colaborador = self.get_object()
         dados = serializer.validated_data
 
-        # Proteções do Administrador
-        if colaborador.role.nome == Role.ADMIN:
-            if dados.get("ativo") is False and colaborador.usuario_id == self.request.user.id:
-                admins_ativos = Colaborador.objects.filter(
-                    clinica=colaborador.clinica, role__nome=Role.ADMIN, ativo=True
-                ).exclude(pk=colaborador.pk).exists()
-                if not admins_ativos:
-                    raise PermissionDenied("Não é possível remover o último administrador ativo da clínica.")
+        if "usuario" in dados:
+            raise ValidationError({
+                "usuario": "Não é permitido trocar o usuário de um vínculo existente."
+            })
 
-            if dados.get("role") and dados["role"].nome != Role.ADMIN and colaborador.usuario_id != self.request.user.id:
-                raise PermissionDenied("Um administrador não pode alterar a função de outro administrador.")
+        if colaborador.clinica_id != self.get_clinica().pk:
+            raise PermissionDenied(
+                "O colaborador não pertence à clínica ativa."
+            )
 
-            if dados.get("ativo") is False and colaborador.usuario_id != self.request.user.id:
-                raise PermissionDenied("Um administrador não pode desativar outro administrador.")
+        novo_role = dados.get("role", colaborador.role)
+        novo_ativo = dados.get("ativo", colaborador.ativo)
 
-        # Proteção do Profissional (Verifica na edição via PATCH/PUT)
-        if dados.get("ativo") is False and colaborador.ativo:
+        self._validar_regras_administrador(
+            colaborador,
+            novo_role,
+            novo_ativo,
+        )
+
+        esta_deixando_de_ser_profissional = (
+            colaborador.role.nome == Role.PROFISSIONAL
+            and novo_role.nome != Role.PROFISSIONAL
+        )
+        esta_sendo_desativado = colaborador.ativo and not novo_ativo
+
+        if esta_deixando_de_ser_profissional or esta_sendo_desativado:
             self._validar_desativacao_profissional(colaborador)
 
-        serializer.save()
+        anteriores = self._snapshot(colaborador)
+
+        colaborador = serializer.save(clinica=self.get_clinica())
+
+        self._registrar_auditoria(
+            colaborador,
+            Auditoria.UPDATE,
+            dados_anteriores=anteriores,
+            dados_novos=self._snapshot(colaborador),
+        )
 
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
         colaborador = self.get_object()
 
-        # Proteções do Administrador no Delete lógico
+        if not colaborador.ativo:
+            return Response(
+                {"detail": "O colaborador já está inativo."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if colaborador.clinica_id != self.get_clinica().pk:
+            raise PermissionDenied(
+                "O colaborador não pertence à clínica ativa."
+            )
+
         if colaborador.role.nome == Role.ADMIN:
             if colaborador.usuario_id != request.user.id:
-                raise PermissionDenied("Um administrador não pode remover outro administrador.")
+                raise PermissionDenied(
+                    "Um administrador não pode remover outro administrador."
+                )
 
-            admins_ativos = Colaborador.objects.filter(
-                clinica=colaborador.clinica, role__nome=Role.ADMIN, ativo=True
+            existe_outro_admin_ativo = Colaborador.objects.filter(
+                clinica=colaborador.clinica,
+                role__nome=Role.ADMIN,
+                ativo=True,
             ).exclude(pk=colaborador.pk).exists()
 
-            if not admins_ativos:
-                raise PermissionDenied("Não é possível remover o último administrador ativo da clínica.")
+            if not existe_outro_admin_ativo:
+                raise PermissionDenied(
+                    "Não é possível remover o último administrador ativo "
+                    "da clínica."
+                )
 
-        # Validação de Profissional
         self._validar_desativacao_profissional(colaborador)
 
-        # Desativação Lógica e Salvar
+        anteriores = self._snapshot(colaborador)
+
         colaborador.ativo = False
         colaborador.save(update_fields=["ativo", "updated_at"])
 
-        # Auditoria (Regra 12)
-        Auditoria.objects.create(
-            usuario=request.user,
-            clinica=colaborador.clinica,
-            acao=Auditoria.DEACTIVATE,
-            entidade="Colaborador",
-            objeto_id=str(colaborador.id),
-            origem="USUARIO",
-            ip=request.META.get('REMOTE_ADDR'),
-            user_agent=request.META.get('HTTP_USER_AGENT', '')
+        self._registrar_auditoria(
+            colaborador,
+            Auditoria.DEACTIVATE,
+            dados_anteriores=anteriores,
+            dados_novos=self._snapshot(colaborador),
         )
 
         return Response(status=status.HTTP_204_NO_CONTENT)

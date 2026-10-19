@@ -4,77 +4,68 @@ from core.models import Role, Colaborador
 
 class HasClinicaContext(permissions.BasePermission):
     """
-    Valida se o contexto da clínica foi explicitamente informado e se o
-    usuário autenticado possui um vínculo ativo com este estabelecimento.
-    Atende à Seção 7 da especificação v1.1 (Contexto da Clínica e Isolamento).
+    Valida a autenticação, o cabeçalho X-Clinica-ID e o vínculo ativo.
+    Disponibiliza a clínica e o colaborador autenticados para as views.
     """
 
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
 
-        clinica_id = request.headers.get('X-Clinica-ID')
+        clinica_id = request.headers.get("X-Clinica-ID")
         if not clinica_id:
             return False
 
-        return Colaborador.objects.filter(
-            usuario=request.user,
-            clinica_id=clinica_id,
-            ativo=True
-        ).exists()
+        try:
+            colaborador = Colaborador.objects.select_related(
+                "role",
+                "clinica",
+            ).get(
+                usuario=request.user,
+                clinica_id=clinica_id,
+                ativo=True,
+            )
+
+        except Colaborador.DoesNotExist:
+            return False
+        except (TypeError, ValueError):
+            return False
+
+        request.clinica = colaborador.clinica
+        request.colaborador = colaborador
+        request.role = colaborador.role.nome
+
+        return True
 
 
 class IsAdmin(HasClinicaContext):
     def has_permission(self, request, view):
-        if not super().has_permission(request, view):
-            return False
-            
-        clinica_id = request.headers.get('X-Clinica-ID')
-        return Colaborador.objects.filter(
-            usuario=request.user,
-            clinica_id=clinica_id,
-            ativo=True,
-            role__nome=Role.ADMIN
-        ).exists()
+        return (
+            super().has_permission(request, view)
+            and request.colaborador.role.nome == Role.ADMIN
+        )
 
 
 class IsSecretario(HasClinicaContext):
     def has_permission(self, request, view):
-        if not super().has_permission(request, view):
-            return False
-            
-        clinica_id = request.headers.get('X-Clinica-ID')
-        return Colaborador.objects.filter(
-            usuario=request.user,
-            clinica_id=clinica_id,
-            ativo=True,
-            role__nome=Role.SECRETARIO
-        ).exists()
+        return (
+            super().has_permission(request, view)
+            and request.colaborador.role.nome == Role.SECRETARIO
+        )
 
 
 class IsAdminOrSecretario(HasClinicaContext):
     def has_permission(self, request, view):
-        if not super().has_permission(request, view):
-            return False
-            
-        clinica_id = request.headers.get('X-Clinica-ID')
-        return Colaborador.objects.filter(
-            usuario=request.user,
-            clinica_id=clinica_id,
-            ativo=True,
-            role__nome__in=[Role.ADMIN, Role.SECRETARIO]
-        ).exists()
+        return (
+            super().has_permission(request, view)
+            and request.colaborador.role.nome
+            in [Role.ADMIN, Role.SECRETARIO]
+        )
 
 
 class IsProfissional(HasClinicaContext):
     def has_permission(self, request, view):
-        if not super().has_permission(request, view):
-            return False
-            
-        clinica_id = request.headers.get('X-Clinica-ID')
-        return Colaborador.objects.filter(
-            usuario=request.user,
-            clinica_id=clinica_id,
-            ativo=True,
-            role__nome=Role.PROFISSIONAL
-        ).exists()
+        return (
+            super().has_permission(request, view)
+            and request.colaborador.role.nome == Role.PROFISSIONAL
+        )

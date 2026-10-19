@@ -1,46 +1,76 @@
 import re
-from rest_framework.exceptions import ValidationError
 
-def validar_cpf(cpf):
-    cpf = re.sub(r'\D', '', str(cpf))
-    if len(cpf) != 11 or cpf == cpf[0] * 11:
-        raise ValidationError("CPF inválido.")
-    
-    soma = sum(int(cpf[i]) * (10 - i) for i in range(9))
-    digito1 = (soma * 10) % 11
-    if digito1 == 10:
-        digito1 = 0
-    if digito1 != int(cpf[9]):
-        raise ValidationError("CPF inválido.")
+from django.core.exceptions import ValidationError
 
-    soma = sum(int(cpf[i]) * (11 - i) for i in range(10))
-    digito2 = (soma * 10) % 11
-    if digito2 == 10:
-        digito2 = 0
-    if digito2 != int(cpf[10]):
-        raise ValidationError("CPF inválido.")
-        
+
+def somente_digitos(value):
+    return re.sub(r"\D", "", str(value or ""))
+
+
+def validar_cpf(value):
+    cpf = somente_digitos(value)
+
+    if len(cpf) != 11 or len(set(cpf)) == 1:
+        raise ValidationError("CPF inválido. Informe os 11 dígitos corretamente.")
+
+    for tamanho in (9, 10):
+        soma = sum(
+            int(cpf[indice]) * (tamanho + 1 - indice)
+            for indice in range(tamanho)
+        )
+        resto = (soma * 10) % 11
+        digito = 0 if resto == 10 else resto
+
+        if digito != int(cpf[tamanho]):
+            raise ValidationError("CPF inválido. Informe os 11 dígitos corretamente.")
+
     return cpf
 
-def validar_cnpj(cnpj):
-    cnpj = re.sub(r'\D', '', str(cnpj))
-    if len(cnpj) != 14 or cnpj == cnpj[0] * 14:
-        raise ValidationError("CNPJ inválido.")
-        
-    def calcula_digito(cnpj_parcial, pesos):
-        soma = sum(int(cnpj_parcial[i]) * pesos[i] for i in range(len(pesos)))
-        resto = soma % 11
-        return 0 if resto < 2 else 11 - resto
 
-    pesos1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
-    pesos2 = [6] + pesos1
+def validar_cnpj(value):
+    cnpj = somente_digitos(value)
 
-    digito1 = calcula_digito(cnpj, pesos1)
-    if digito1 != int(cnpj[12]):
-        raise ValidationError("CNPJ inválido.")
+    if len(cnpj) != 14 or len(set(cnpj)) == 1:
+        raise ValidationError("CNPJ inválido. Informe os 14 dígitos corretamente.")
 
-    digito2 = calcula_digito(cnpj, pesos2)
-    if digito2 != int(cnpj[13]):
-        raise ValidationError("CNPJ inválido.")
+    pesos1 = (5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2)
+    pesos2 = (6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2)
+
+    soma1 = sum(
+        int(digito) * peso
+        for digito, peso in zip(cnpj[:12], pesos1)
+    )
+    resto1 = soma1 % 11
+    digito1 = 0 if resto1 < 2 else 11 - resto1
+
+    soma2 = sum(
+        int(digito) * peso
+        for digito, peso in zip(cnpj[:12] + str(digito1), pesos2)
+    )
+    resto2 = soma2 % 11
+    digito2 = 0 if resto2 < 2 else 11 - resto2
+
+    if cnpj[-2:] != f"{digito1}{digito2}":
+        raise ValidationError("CNPJ inválido. Informe os 14 dígitos corretamente.")
 
     return cnpj
+
+
+def validar_telefone(value):
+    telefone = somente_digitos(value)
+
+    if not 10 <= len(telefone) <= 11:
+        raise ValidationError(
+            "Telefone inválido. Informe o DDD e um número com 10 ou 11 dígitos."
+        )
+
+    return telefone
+
+
+def validar_telefone_opcional(value):
+    telefone = somente_digitos(value)
+
+    if not telefone:
+        return ""
+
+    return validar_telefone(telefone)

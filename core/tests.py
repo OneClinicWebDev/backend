@@ -8,8 +8,6 @@ class AgendamentoConstraintTest(TransactionTestCase):
     def setUp(self):
         self.usuario1 = Usuario.objects.create_user(cpf="11144477735", nome_completo="Profissional Teste", data_nascimento="1990-01-01", password="123")
         self.usuario2 = Usuario.objects.create_user(cpf="22255588846", nome_completo="Cliente Teste", data_nascimento="1995-01-01", password="123")
-        
-        # Adicionado o telefone aqui para passar na validação estrita do modelo Clinica
         self.clinica = Clinica.objects.create(
             cnpj="11444777000161", 
             razao_social="Clinica A", 

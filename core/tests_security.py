@@ -1,11 +1,16 @@
-from rest_framework.test import APITestCase
+from django.core.cache import cache
+from django.test import TestCase
 from rest_framework import status
+from rest_framework.test import APIClient
 
-from core.models import Usuario, Clinica, Colaborador, Role
+from core.models import Clinica, Usuario, Role, Colaborador
 
 
-class SecurityTestCase(APITestCase):
+class SecurityTestCase(TestCase):
     def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+
         self.clinica1 = Clinica.objects.create(
             cnpj="48545800000100",
             razao_social="Clinica A",
@@ -20,12 +25,12 @@ class SecurityTestCase(APITestCase):
             password="SenhaForte123",
         )
 
-        role_admin = Role.objects.create(nome=Role.ADMIN)
+        self.role_admin = Role.objects.create(nome=Role.ADMIN)
 
-        Colaborador.objects.create(
+        self.colaborador1 = Colaborador.objects.create(
             usuario=self.user1,
             clinica=self.clinica1,
-            role=role_admin,
+            role=self.role_admin,
             ativo=True,
         )
 
@@ -37,17 +42,18 @@ class SecurityTestCase(APITestCase):
         )
 
         self.login_url = "/api/token/"
-        self.logout_url = "/api/token/blacklist/"
+        self.logout_url = "/api/auth/logout/"
         self.refresh_url = "/api/token/refresh/"
         self.clientes_url = "/api/clientes/"
 
-    def obter_tokens(self):
+    def obter_tokens(self, cpf=None, password="SenhaForte123"):
         response = self.client.post(
             self.login_url,
             {
-                "cpf": "52998224725",
-                "password": "SenhaForte123",
+                "cpf": cpf or self.user1.cpf,
+                "password": password,
             },
+            format="json",
         )
 
         self.assertEqual(
@@ -55,11 +61,10 @@ class SecurityTestCase(APITestCase):
             status.HTTP_200_OK,
             response.data,
         )
-
         self.assertIn("access", response.data)
         self.assertIn("refresh", response.data)
 
-        return response.data
+        return response.data["access"], response.data["refresh"]
 
     def autenticar_na_clinica(self, access_token, clinica_id):
         self.client.credentials(
@@ -68,18 +73,34 @@ class SecurityTestCase(APITestCase):
         )
 
     def test_login_retorna_tokens(self):
-        tokens = self.obter_tokens()
+        access, refresh = self.obter_tokens()
 
-        self.assertTrue(tokens["access"])
-        self.assertTrue(tokens["refresh"])
+        self.assertTrue(access)
+        self.assertTrue(refresh)
+
+    def test_login_usuario_inativo_e_negado(self):
+        self.user1.is_active = False
+        self.user1.save(update_fields=["is_active"])
+
+        response = self.client.post(
+            self.login_url,
+            {
+                "cpf": self.user1.cpf,
+                "password": "SenhaForte123",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_401_UNAUTHORIZED,
+            response.data,
+        )
 
     def test_acesso_propria_clinica_com_jwt(self):
-        tokens = self.obter_tokens()
+        access, _ = self.obter_tokens()
 
-        self.autenticar_na_clinica(
-            tokens["access"],
-            self.clinica1.id,
-        )
+        self.autenticar_na_clinica(access, self.clinica1.id)
 
         response = self.client.get(self.clientes_url)
 
@@ -90,25 +111,23 @@ class SecurityTestCase(APITestCase):
         )
 
     def test_acesso_negado_clinica_isolada(self):
-        tokens = self.obter_tokens()
+        access, _ = self.obter_tokens()
 
-        self.autenticar_na_clinica(
-            tokens["access"],
-            self.clinica2.id,
-        )
+        self.autenticar_na_clinica(access, self.clinica2.id)
 
         response = self.client.get(self.clientes_url)
 
         self.assertEqual(
             response.status_code,
             status.HTTP_403_FORBIDDEN,
+            getattr(response, "data", None),
         )
 
     def test_acesso_sem_clinica_selecionada_e_negado(self):
-        tokens = self.obter_tokens()
+        access, _ = self.obter_tokens()
 
         self.client.credentials(
-            HTTP_AUTHORIZATION=f"Bearer {tokens['access']}",
+            HTTP_AUTHORIZATION=f"Bearer {access}",
         )
 
         response = self.client.get(self.clientes_url)
@@ -116,15 +135,13 @@ class SecurityTestCase(APITestCase):
         self.assertEqual(
             response.status_code,
             status.HTTP_403_FORBIDDEN,
+            getattr(response, "data", None),
         )
 
     def test_logout_invalida_refresh_token(self):
-        tokens = self.obter_tokens()
+        access, refresh = self.obter_tokens()
 
-        self.autenticar_na_clinica(
-            tokens["access"],
-            self.clinica1.id,
-        )
+        self.autenticar_na_clinica(access, self.clinica1.id)
 
         response_antes = self.client.get(self.clientes_url)
 
@@ -136,22 +153,60 @@ class SecurityTestCase(APITestCase):
 
         logout_response = self.client.post(
             self.logout_url,
-            {"refresh": tokens["refresh"]},
+            {"refresh": refresh},
+            format="json",
         )
 
         self.assertEqual(
             logout_response.status_code,
-            status.HTTP_200_OK,
+            status.HTTP_205_RESET_CONTENT,
+            logout_response.data,
         )
-
-        self.client.credentials()
 
         refresh_response = self.client.post(
             self.refresh_url,
-            {"refresh": tokens["refresh"]},
+            {"refresh": refresh},
+            format="json",
         )
 
         self.assertEqual(
             refresh_response.status_code,
             status.HTTP_401_UNAUTHORIZED,
+            refresh_response.data,
+        )
+
+    def test_logout_nao_invalida_refresh_de_outro_usuario(self):
+        _, refresh = self.obter_tokens()
+
+        outro_usuario = Usuario.objects.create_user(
+            cpf="11144477735",
+            nome_completo="Outro Usuario",
+            data_nascimento="1992-02-02",
+            password="OutraSenha123",
+        )
+
+        self.client.force_authenticate(user=outro_usuario)
+
+        response = self.client.post(
+            self.logout_url,
+            {"refresh": refresh},
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+            response.data,
+        )
+
+        refresh_response = self.client.post(
+            self.refresh_url,
+            {"refresh": refresh},
+            format="json",
+        )
+
+        self.assertEqual(
+            refresh_response.status_code,
+            status.HTTP_200_OK,
+            refresh_response.data,
         )

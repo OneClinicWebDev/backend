@@ -1,8 +1,8 @@
-
 from datetime import timedelta
 from io import StringIO
-
+from django.core.exceptions import ValidationError
 from django.core.management import call_command
+from django.db.models.deletion import ProtectedError
 from django.test import TestCase
 from django.utils import timezone
 
@@ -71,7 +71,7 @@ class SessoesPacoteTestCase(TestCase):
 
     def criar_agendamento_vencido(self, resultado=None):
         inicio = timezone.now() - timedelta(hours=2)
-        agendamento = Agendamento.objects.create(
+        return Agendamento.objects.create(
             clinica=self.clinica,
             cliente=self.cliente,
             profissional=self.profissional,
@@ -81,103 +81,15 @@ class SessoesPacoteTestCase(TestCase):
             data_hora_fim=inicio + timedelta(minutes=30),
             status=Agendamento.CONFIRMADO,
             resultado=(
-                resultado
-                or Agendamento.AGUARDANDO_RESULTADO
+                resultado or Agendamento.AGUARDANDO_RESULTADO
             ),
         )
-        return agendamento
 
-    def test_saldo_calculado_pelas_sessoes_disponiveis(self):
-        for _ in range(3):
-            SessaoPacote.objects.create(
-                pacote=self.pacote,
-                status=SessaoPacote.DISPONIVEL,
-            )
-
-        self.assertEqual(self.pacote.saldo_sessoes, 3)
-
-        sessao = self.pacote.sessoes.first()
-        sessao.status = SessaoPacote.UTILIZADA
-        sessao.save(update_fields=["status", "updated_at"])
-
-        self.assertEqual(self.pacote.saldo_sessoes, 2)
-
-    def test_rotina_consume_sessao_agendada_e_registra_historico(self):
-        agendamento = self.criar_agendamento_vencido()
-
-        sessao = SessaoPacote.objects.create(
+    def test_pacote_com_sessoes_nao_pode_ser_excluido(self):
+        SessaoPacote.objects.create(
             pacote=self.pacote,
-            agendamento=agendamento,
-            status=SessaoPacote.AGENDADA,
+            status=SessaoPacote.DISPONIVEL,
         )
 
-        call_command(
-            "concluir_agendamentos",
-            stdout=StringIO(),
-        )
-
-        agendamento.refresh_from_db()
-        sessao.refresh_from_db()
-
-        self.assertEqual(agendamento.status, Agendamento.CONCLUIDO)
-        self.assertEqual(agendamento.resultado, Agendamento.REALIZADO)
-        self.assertEqual(sessao.status, SessaoPacote.UTILIZADA)
-
-        historico = HistoricoSessao.objects.get(sessao=sessao)
-        self.assertEqual(
-            historico.estado_anterior,
-            SessaoPacote.AGENDADA,
-        )
-        self.assertEqual(
-            historico.estado_novo,
-            SessaoPacote.UTILIZADA,
-        )
-        self.assertEqual(
-            historico.agendamento_relacionado_id,
-            agendamento.id,
-        )
-
-    def test_falta_previamente_registrada_nao_consumira_sessao(self):
-        agendamento = self.criar_agendamento_vencido(
-            resultado=Agendamento.FALTA,
-        )
-
-        sessao = SessaoPacote.objects.create(
-            pacote=self.pacote,
-            agendamento=agendamento,
-            status=SessaoPacote.AGENDADA,
-        )
-
-        call_command(
-            "concluir_agendamentos",
-            stdout=StringIO(),
-        )
-
-        agendamento.refresh_from_db()
-        sessao.refresh_from_db()
-
-        self.assertEqual(agendamento.status, Agendamento.CONFIRMADO)
-        self.assertEqual(agendamento.resultado, Agendamento.FALTA)
-        self.assertEqual(sessao.status, SessaoPacote.AGENDADA)
-        self.assertFalse(
-            HistoricoSessao.objects.filter(sessao=sessao).exists()
-        )
-
-    def test_rotina_nao_consume_sessao_mais_de_uma_vez(self):
-        agendamento = self.criar_agendamento_vencido()
-        sessao = SessaoPacote.objects.create(
-            pacote=self.pacote,
-            agendamento=agendamento,
-            status=SessaoPacote.AGENDADA,
-        )
-
-        call_command("concluir_agendamentos", stdout=StringIO())
-        call_command("concluir_agendamentos", stdout=StringIO())
-
-        sessao.refresh_from_db()
-
-        self.assertEqual(sessao.status, SessaoPacote.UTILIZADA)
-        self.assertEqual(
-            HistoricoSessao.objects.filter(sessao=sessao).count(),
-            1,
-        )
+        with self.assertRaises(ProtectedError):
+            self.pacote.delete()

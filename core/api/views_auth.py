@@ -41,14 +41,36 @@ class LoginView(APIView):
             "vinculos": clinicas_disponiveis
         })
 
+
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        from rest_framework_simplejwt.exceptions import TokenError
+
+        refresh_token = request.data.get("refresh")
+
+        if not refresh_token:
+            return Response(
+                {"detail": "O refresh token é obrigatório."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         try:
-            refresh_token = request.data["refresh"]
             token = RefreshToken(refresh_token)
+
+            if str(token["user_id"]) != str(request.user.pk):
+                return Response(
+                    {"detail": "Token inválido para este usuário."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
             token.blacklist()
-            return Response(status=status.HTTP_205_RESET_CONTENT)
-        except Exception:
-            return Response(status=status.HTTP_400_BAD_REQUEST)
+
+        except (TokenError, KeyError, TypeError, ValueError):
+            return Response(
+                {"detail": "Refresh token inválido ou expirado."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(status=status.HTTP_205_RESET_CONTENT)

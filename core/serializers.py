@@ -187,9 +187,9 @@ class AgendamentoSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"profissional": "Profissional inválido para a clínica ativa."}
                 )
-            if profissional.role.nome != Role.PROFISSIONAL:
+            if profissional.role.nome not in (Role.PROFISSIONAL, Role.ADMIN):
                 raise serializers.ValidationError(
-                    {"profissional": "O colaborador selecionado não é profissional."}
+                 {"profissional": "O colaborador selecionado não pode realizar atendimentos."}
                 )
 
         if servico is not None:

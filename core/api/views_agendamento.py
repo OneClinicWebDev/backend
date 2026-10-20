@@ -1,4 +1,7 @@
 from django.db import IntegrityError, transaction
+from django.db.models import Q
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -92,7 +95,7 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
                 "cliente": "Não é possível agendar para um cliente inativo."
             })
 
-    def _validar_conflitos(
+    def _buscar_conflitos(
         self,
         clinica,
         profissional_id,
@@ -103,7 +106,9 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
     ):
         if inicio >= fim:
             raise ValidationError({
-                "data_hora_fim": "O horário final deve ser posterior ao inicial."
+                "data_hora_fim": (
+                    "O horário final deve ser posterior ao inicial."
+                )
             })
 
         conflitos = Agendamento.objects.filter(
@@ -114,19 +119,56 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
             ],
             data_hora_inicio__lt=fim,
             data_hora_fim__gt=inicio,
+        ).filter(
+            Q(profissional_id=profissional_id)
+            | Q(cliente_id=cliente_id)
         )
 
-        if agendamento_id:
-            conflitos = conflitos.exclude(id=agendamento_id)
+        if agendamento_id is not None:
+            conflitos = conflitos.exclude(pk=agendamento_id)
 
-        if (
-            conflitos.filter(profissional_id=profissional_id).exists()
-            or conflitos.filter(cliente_id=cliente_id).exists()
-        ):
+        return conflitos.select_for_update().order_by("pk")
+
+    def _validar_conflitos(
+        self,
+        clinica,
+        profissional_id,
+        cliente_id,
+        inicio,
+        fim,
+        agendamento_id=None,
+    ):
+        conflitos = self._buscar_conflitos(
+            clinica,
+            profissional_id,
+            cliente_id,
+            inicio,
+            fim,
+            agendamento_id,
+        )
+
+        if conflitos.exists():
             raise ConflictException(
                 "Existe um agendamento PENDENTE ou CONFIRMADO "
                 "no mesmo intervalo. Resolva o conflito explicitamente."
             )
+
+    def _snapshot(self, agendamento):
+        return {
+            "status": agendamento.status,
+            "resultado": agendamento.resultado,
+            "motivo_cancelamento": agendamento.motivo_cancelamento,
+            "cliente_id": str(agendamento.cliente_id),
+            "profissional_id": str(agendamento.profissional_id),
+            "servico_id": str(agendamento.servico_id),
+            "pacote_origem_id": (
+                str(agendamento.pacote_origem_id)
+                if agendamento.pacote_origem_id
+                else None
+            ),
+            "inicio": agendamento.data_hora_inicio.isoformat(),
+            "fim": agendamento.data_hora_fim.isoformat(),
+        }
 
     def _registrar_auditoria(
         self,
@@ -158,6 +200,327 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
             user_agent=request.META.get("HTTP_USER_AGENT", ""),
         )
 
+    def _registrar_historico_sessao(
+        self,
+        sessao,
+        agendamento,
+        estado_anterior,
+        estado_novo,
+        motivo,
+        justificativa="",
+    ):
+        HistoricoSessao.objects.create(
+            sessao=sessao,
+            estado_anterior=estado_anterior,
+            estado_novo=estado_novo,
+            usuario_executor=self.request.user,
+            agendamento_relacionado=agendamento,
+            motivo=motivo,
+            justificativa=justificativa,
+        )
+
+    def _liberar_sessao_pacote(
+        self,
+        agendamento,
+        motivo,
+        justificativa="",
+    ):
+        sessao = (
+            SessaoPacote.objects.select_for_update()
+            .filter(agendamento=agendamento)
+            .first()
+        )
+
+        if not sessao or sessao.status != SessaoPacote.AGENDADA:
+            return
+
+        estado_anterior = sessao.status
+        sessao.status = SessaoPacote.DISPONIVEL
+        sessao.agendamento = None
+        sessao.save(update_fields=[
+            "status",
+            "agendamento",
+            "updated_at",
+        ])
+
+        self._registrar_historico_sessao(
+            sessao=sessao,
+            agendamento=agendamento,
+            estado_anterior=estado_anterior,
+            estado_novo=SessaoPacote.DISPONIVEL,
+            motivo=motivo,
+            justificativa=justificativa,
+        )
+
+    def _cancelar_por_sobreposicao(self, agendamento):
+        anteriores = self._snapshot(agendamento)
+
+        agendamento.status = Agendamento.CANCELADO
+        agendamento.motivo_cancelamento = "SOBREPOSICAO"
+        agendamento.save(update_fields=[
+            "status",
+            "motivo_cancelamento",
+            "updated_at",
+        ])
+
+        self._liberar_sessao_pacote(
+            agendamento,
+            motivo="Cancelamento por sobreposição de horário",
+            justificativa="SOBREPOSICAO",
+        )
+
+        self._registrar_auditoria(
+            agendamento,
+            Auditoria.UPDATE,
+            dados_anteriores=anteriores,
+            dados_novos=self._snapshot(agendamento),
+        )
+
+    def _interpretar_data_hora(self, valor, campo):
+        if not isinstance(valor, str) or not valor.strip():
+            raise ValidationError({
+                campo: (
+                    "Informe uma data e hora válidas em formato ISO 8601."
+                )
+            })
+
+        data_hora = parse_datetime(valor.strip())
+
+        if data_hora is None:
+            raise ValidationError({
+                campo: (
+                    "Informe uma data e hora válidas em formato ISO 8601."
+                )
+            })
+
+        if timezone.is_naive(data_hora):
+            data_hora = timezone.make_aware(
+                data_hora,
+                timezone.get_current_timezone(),
+            )
+
+        return data_hora
+
+    def _resolver_conflito_criacao(
+        self,
+        clinica,
+        profissional,
+        cliente,
+        inicio,
+        fim,
+    ):
+        conflitos = list(
+            self._buscar_conflitos(
+                clinica,
+                profissional.id,
+                cliente.id,
+                inicio,
+                fim,
+            )
+        )
+
+        confirmados = [
+            item
+            for item in conflitos
+            if item.status == Agendamento.CONFIRMADO
+        ]
+
+        if confirmados:
+            raise ConflictException({
+                "detail": (
+                    "O horário possui agendamento confirmado. "
+                    "Nenhum agendamento foi alterado."
+                ),
+                "conflitos_confirmados": [
+                    {
+                        "id": item.pk,
+                        "inicio": item.data_hora_inicio.isoformat(),
+                        "fim": item.data_hora_fim.isoformat(),
+                    }
+                    for item in confirmados
+                ],
+            })
+
+        pendentes = [
+            item
+            for item in conflitos
+            if item.status == Agendamento.PENDENTE
+        ]
+
+        if not pendentes:
+            return
+
+        if len(pendentes) > 1:
+            raise ConflictException({
+                "detail": (
+                    "Existem vários agendamentos pendentes conflitantes. "
+                    "Remaneje os agendamentos individualmente e tente "
+                    "novamente, ou resolva os conflitos antes de confirmar "
+                    "um novo agendamento."
+                ),
+                "conflitos_pendentes": [
+                    {
+                        "id": item.pk,
+                        "inicio": item.data_hora_inicio.isoformat(),
+                        "fim": item.data_hora_fim.isoformat(),
+                    }
+                    for item in pendentes
+                ],
+            })
+
+        request_data = self.request.data
+        decisao = request_data.get("resolucao_conflito")
+        conflito_id = request_data.get("agendamento_conflitante_id")
+
+        if not decisao:
+            raise ConflictException({
+                "detail": (
+                    "Existe um agendamento pendente no mesmo intervalo. "
+                    "Informe uma resolução explícita."
+                ),
+                "opcoes": [
+                    "REMANEJAR",
+                    "CANCELAR_E_CONFIRMAR",
+                ],
+                "conflitos_pendentes": [
+                    {
+                        "id": item.pk,
+                        "inicio": item.data_hora_inicio.isoformat(),
+                        "fim": item.data_hora_fim.isoformat(),
+                    }
+                    for item in pendentes
+                ],
+            })
+
+        if decisao not in (
+            "REMANEJAR",
+            "CANCELAR_E_CONFIRMAR",
+        ):
+            raise ValidationError({
+                "resolucao_conflito": (
+                    "Utilize REMANEJAR ou CANCELAR_E_CONFIRMAR."
+                )
+            })
+
+        if conflito_id is None:
+            raise ValidationError({
+                "agendamento_conflitante_id": (
+                    "Informe o ID do agendamento pendente que será resolvido."
+                )
+            })
+
+        try:
+            conflito_id = int(conflito_id)
+        except (TypeError, ValueError):
+            raise ValidationError({
+                "agendamento_conflitante_id": (
+                    "Informe um ID de agendamento válido."
+                )
+            })
+
+        conflito = next(
+            (item for item in pendentes if item.pk == conflito_id),
+            None,
+        )
+
+        if conflito is None:
+            raise ValidationError({
+                "agendamento_conflitante_id": (
+                    "O ID informado não corresponde a um agendamento "
+                    "pendente conflitante desta clínica."
+                )
+            })
+
+        if decisao == "CANCELAR_E_CONFIRMAR":
+            self._cancelar_por_sobreposicao(conflito)
+
+        else:
+            novo_inicio = self._interpretar_data_hora(
+                request_data.get("conflito_novo_inicio"),
+                "conflito_novo_inicio",
+            )
+            novo_fim = self._interpretar_data_hora(
+                request_data.get("conflito_novo_fim"),
+                "conflito_novo_fim",
+            )
+
+            if novo_inicio >= novo_fim:
+                raise ValidationError({
+                    "conflito_novo_fim": (
+                        "O horário final deve ser posterior ao inicial."
+                    )
+                })
+
+            conflitos_novo_horario = self._buscar_conflitos(
+                clinica=conflito.clinica,
+                profissional_id=conflito.profissional_id,
+                cliente_id=conflito.cliente_id,
+                inicio=novo_inicio,
+                fim=novo_fim,
+                agendamento_id=conflito.pk,
+            )
+
+            if conflitos_novo_horario.exists():
+                raise ConflictException({
+                    "detail": (
+                        "O novo horário escolhido para o agendamento "
+                        "pendente também possui conflitos."
+                    ),
+                    "conflitos_novo_horario": [
+                        {
+                            "id": item.pk,
+                            "status": item.status,
+                            "inicio": item.data_hora_inicio.isoformat(),
+                            "fim": item.data_hora_fim.isoformat(),
+                        }
+                        for item in conflitos_novo_horario
+                    ],
+                })
+
+            anteriores = self._snapshot(conflito)
+
+            conflito.data_hora_inicio = novo_inicio
+            conflito.data_hora_fim = novo_fim
+            conflito.save(update_fields=[
+                "data_hora_inicio",
+                "data_hora_fim",
+                "updated_at",
+            ])
+
+            self._registrar_auditoria(
+                conflito,
+                Auditoria.UPDATE,
+                dados_anteriores=anteriores,
+                dados_novos=self._snapshot(conflito),
+            )
+
+        conflitos_restantes = list(
+            self._buscar_conflitos(
+                clinica,
+                profissional.id,
+                cliente.id,
+                inicio,
+                fim,
+            )
+        )
+
+        if conflitos_restantes:
+            raise ConflictException({
+                "detail": (
+                    "Ainda existem conflitos no horário solicitado. "
+                    "Nenhuma alteração parcial foi mantida."
+                ),
+                "conflitos": [
+                    {
+                        "id": item.pk,
+                        "status": item.status,
+                        "inicio": item.data_hora_inicio.isoformat(),
+                        "fim": item.data_hora_fim.isoformat(),
+                    }
+                    for item in conflitos_restantes
+                ],
+            })
+
     @transaction.atomic
     def perform_create(self, serializer):
         clinica = self.get_clinica()
@@ -167,16 +530,12 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
         fim = serializer.validated_data["data_hora_fim"]
 
         self._validar_cliente_ativo(cliente, clinica)
+        self._validar_autonomia_agenda(clinica, profissional.id)
 
-        self._validar_autonomia_agenda(
+        self._resolver_conflito_criacao(
             clinica,
-            profissional.id,
-        )
-
-        self._validar_conflitos(
-            clinica,
-            profissional.id,
-            cliente.id,
+            profissional,
+            cliente,
             inicio,
             fim,
         )
@@ -196,20 +555,7 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
         self._registrar_auditoria(
             agendamento,
             Auditoria.CREATE,
-            dados_novos={
-                "status": agendamento.status,
-                "resultado": agendamento.resultado,
-                "cliente_id": str(agendamento.cliente_id),
-                "profissional_id": str(agendamento.profissional_id),
-                "servico_id": str(agendamento.servico_id),
-                "pacote_origem_id": (
-                    str(agendamento.pacote_origem_id)
-                    if agendamento.pacote_origem_id
-                    else None
-                ),
-                "inicio": agendamento.data_hora_inicio.isoformat(),
-                "fim": agendamento.data_hora_fim.isoformat(),
-            },
+            dados_novos=self._snapshot(agendamento),
         )
 
     @transaction.atomic
@@ -243,11 +589,7 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
         )
 
         self._validar_cliente_ativo(cliente, clinica)
-
-        self._validar_autonomia_agenda(
-            clinica,
-            profissional.id,
-        )
+        self._validar_autonomia_agenda(clinica, profissional.id)
 
         self._validar_conflitos(
             clinica,
@@ -258,20 +600,7 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
             agendamento_id=agendamento.id,
         )
 
-        anteriores = {
-            "status": agendamento.status,
-            "resultado": agendamento.resultado,
-            "cliente_id": str(agendamento.cliente_id),
-            "profissional_id": str(agendamento.profissional_id),
-            "servico_id": str(agendamento.servico_id),
-            "pacote_origem_id": (
-                str(agendamento.pacote_origem_id)
-                if agendamento.pacote_origem_id
-                else None
-            ),
-            "inicio": agendamento.data_hora_inicio.isoformat(),
-            "fim": agendamento.data_hora_fim.isoformat(),
-        }
+        anteriores = self._snapshot(agendamento)
 
         try:
             agendamento = serializer.save()
@@ -284,26 +613,17 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
             agendamento,
             Auditoria.UPDATE,
             dados_anteriores=anteriores,
-            dados_novos={
-                "status": agendamento.status,
-                "resultado": agendamento.resultado,
-                "cliente_id": str(agendamento.cliente_id),
-                "profissional_id": str(agendamento.profissional_id),
-                "servico_id": str(agendamento.servico_id),
-                "pacote_origem_id": (
-                    str(agendamento.pacote_origem_id)
-                    if agendamento.pacote_origem_id
-                    else None
-                ),
-                "inicio": agendamento.data_hora_inicio.isoformat(),
-                "fim": agendamento.data_hora_fim.isoformat(),
-            },
+            dados_novos=self._snapshot(agendamento),
         )
 
     @action(detail=True, methods=["post"])
     @transaction.atomic
     def registrar_falta(self, request, pk=None):
-        agendamento = self.get_queryset().select_for_update().get(pk=pk)
+        agendamento = (
+            self.get_queryset()
+            .select_for_update(of=("self",))
+            .get(pk=pk)
+        )
         colaborador = self._colaborador_logado()
 
         if colaborador.role.nome not in (Role.ADMIN, Role.SECRETARIO):
@@ -346,10 +666,7 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
                     )
                 })
 
-        anteriores = {
-            "status": agendamento.status,
-            "resultado": agendamento.resultado,
-        }
+        anteriores = self._snapshot(agendamento)
 
         agendamento.status = Agendamento.CONCLUIDO
         agendamento.resultado = Agendamento.FALTA
@@ -358,6 +675,8 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
             "resultado",
             "updated_at",
         ])
+
+        decisao_registrada = None
 
         if sessao and sessao.status == SessaoPacote.AGENDADA:
             estado_anterior = sessao.status
@@ -375,28 +694,24 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
                 "updated_at",
             ])
 
-            HistoricoSessao.objects.create(
+            self._registrar_historico_sessao(
                 sessao=sessao,
+                agendamento=agendamento,
                 estado_anterior=estado_anterior,
                 estado_novo=estado_novo,
-                usuario_executor=request.user,
-                agendamento_relacionado=agendamento,
                 motivo="Registro manual de falta",
                 justificativa=justificativa,
             )
+
+            decisao_registrada = decisao
 
         self._registrar_auditoria(
             agendamento,
             Auditoria.UPDATE,
             dados_anteriores=anteriores,
             dados_novos={
-                "status": agendamento.status,
-                "resultado": agendamento.resultado,
-                "decisao_sessao": (
-                    decisao
-                    if sessao and sessao.status != SessaoPacote.AGENDADA
-                    else None
-                ),
+                **self._snapshot(agendamento),
+                "decisao_sessao": decisao_registrada,
                 "justificativa": justificativa,
             },
         )
@@ -405,13 +720,17 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
             "detail": "Falta registrada.",
             "agendamento_id": str(agendamento.id),
             "resultado": agendamento.resultado,
-            "decisao_sessao": decisao if sessao else None,
+            "decisao_sessao": decisao_registrada,
         })
 
     @action(detail=True, methods=["post"])
     @transaction.atomic
     def cancelar(self, request, pk=None):
-        agendamento = self.get_queryset().select_for_update().get(pk=pk)
+        agendamento = (
+            self.get_queryset()
+            .select_for_update(of=("self",))
+            .get(pk=pk)
+        )
         colaborador = self._colaborador_logado()
 
         if colaborador.role.nome not in (Role.ADMIN, Role.SECRETARIO):
@@ -434,11 +753,7 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
                 "motivo": "Informe o motivo do cancelamento."
             })
 
-        anteriores = {
-            "status": agendamento.status,
-            "resultado": agendamento.resultado,
-            "motivo_cancelamento": agendamento.motivo_cancelamento,
-        }
+        anteriores = self._snapshot(agendamento)
 
         agendamento.status = Agendamento.CANCELADO
         agendamento.motivo_cancelamento = motivo.strip()[:50]
@@ -448,42 +763,17 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
             "updated_at",
         ])
 
-        sessao = (
-            SessaoPacote.objects.select_for_update()
-            .filter(agendamento=agendamento)
-            .first()
+        self._liberar_sessao_pacote(
+            agendamento,
+            motivo="Cancelamento de agendamento",
+            justificativa=motivo.strip(),
         )
-
-        if sessao and sessao.status == SessaoPacote.AGENDADA:
-            estado_anterior = sessao.status
-
-            sessao.status = SessaoPacote.DISPONIVEL
-            sessao.agendamento = None
-            sessao.save(update_fields=[
-                "status",
-                "agendamento",
-                "updated_at",
-            ])
-
-            HistoricoSessao.objects.create(
-                sessao=sessao,
-                estado_anterior=estado_anterior,
-                estado_novo=SessaoPacote.DISPONIVEL,
-                usuario_executor=request.user,
-                agendamento_relacionado=agendamento,
-                motivo="Cancelamento de agendamento",
-                justificativa=motivo.strip(),
-            )
 
         self._registrar_auditoria(
             agendamento,
             Auditoria.UPDATE,
             dados_anteriores=anteriores,
-            dados_novos={
-                "status": agendamento.status,
-                "resultado": agendamento.resultado,
-                "motivo_cancelamento": agendamento.motivo_cancelamento,
-            },
+            dados_novos=self._snapshot(agendamento),
         )
 
         return Response({

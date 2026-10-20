@@ -1,34 +1,48 @@
 from rest_framework import permissions
+
 from core.models import Role, Colaborador
 
 
 class HasClinicaContext(permissions.BasePermission):
     """
-    Valida a autenticação, o cabeçalho X-Clinica-ID e o vínculo ativo.
+    Valida a autenticação, a clínica selecionada e o vínculo ativo.
     Disponibiliza a clínica e o colaborador autenticados para as views.
     """
 
     def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
+        user = request.user
+
+        if not user or not user.is_authenticated:
+            return False
+
+        if not user.is_active:
             return False
 
         clinica_id = request.headers.get("X-Clinica-ID")
+
         if not clinica_id:
             return False
 
         try:
-            colaborador = Colaborador.objects.select_related(
-                "role",
-                "clinica",
-            ).get(
-                usuario=request.user,
-                clinica_id=clinica_id,
-                ativo=True,
+            colaborador = (
+                Colaborador.objects.select_related(
+                    "role",
+                    "clinica",
+                    "usuario",
+                )
+                .get(
+                    usuario=user,
+                    usuario__is_active=True,
+                    clinica_id=clinica_id,
+                    clinica__ativo=True,
+                    ativo=True,
+                )
             )
-
-        except Colaborador.DoesNotExist:
-            return False
-        except (TypeError, ValueError):
+        except (
+            Colaborador.DoesNotExist,
+            TypeError,
+            ValueError,
+        ):
             return False
 
         request.clinica = colaborador.clinica

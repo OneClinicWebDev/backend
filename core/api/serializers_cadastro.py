@@ -1,3 +1,4 @@
+from datetime import date
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.contrib.auth.password_validation import validate_password
@@ -8,12 +9,11 @@ from core.validators import (
     validar_cpf,
     validar_cnpj,
     validar_telefone,
-    somente_digitos,
 )
 
 
 class CadastroClinicaSerializer(serializers.Serializer):
-    cpf = serializers.CharField(max_length=14)
+    cpf = serializers.CharField(max_length=14, trim_whitespace=True)
     nome_completo = serializers.CharField(max_length=255)
     data_nascimento = serializers.DateField()
     password = serializers.CharField(
@@ -21,23 +21,23 @@ class CadastroClinicaSerializer(serializers.Serializer):
         trim_whitespace=False,
         validators=[validate_password],
     )
-    cnpj = serializers.CharField(max_length=18)
+    cnpj = serializers.CharField(max_length=18, trim_whitespace=True)
     razao_social = serializers.CharField(max_length=255)
     nome_fantasia = serializers.CharField(max_length=255)
-    telefone = serializers.CharField(max_length=20)
+    telefone = serializers.CharField(max_length=20, trim_whitespace=True)
     profissionais_podem_editar_agenda = serializers.BooleanField(
         default=False
     )
 
     def validate_cpf(self, value):
         try:
-            return validar_cpf(somente_digitos(value))
+            return validar_cpf(value)
         except DjangoValidationError as exc:
             raise serializers.ValidationError(exc.messages) from exc
 
     def validate_cnpj(self, value):
         try:
-            cnpj = validar_cnpj(somente_digitos(value))
+            cnpj = validar_cnpj(value)
         except DjangoValidationError as exc:
             raise serializers.ValidationError(exc.messages) from exc
 
@@ -50,7 +50,7 @@ class CadastroClinicaSerializer(serializers.Serializer):
 
     def validate_telefone(self, value):
         try:
-            return validar_telefone(somente_digitos(value))
+            return validar_telefone(value)
         except DjangoValidationError as exc:
             raise serializers.ValidationError(exc.messages) from exc
 
@@ -80,6 +80,14 @@ class CadastroClinicaSerializer(serializers.Serializer):
         if not value:
             raise serializers.ValidationError(
                 "O nome fantasia é obrigatório."
+            )
+
+        return value
+
+    def validate_data_nascimento(self, value):
+        if value >= date.today():
+            raise serializers.ValidationError(
+                "A data de nascimento deve ser anterior à data atual."
             )
 
         return value

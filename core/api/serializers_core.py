@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
 from core.models import (
@@ -11,6 +12,13 @@ from core.models import (
     Pacote,
     SessaoPacote,
 )
+from core.validators import (
+    validar_telefone,
+    validar_cep,
+)
+
+
+MAX_INTEGER = 2147483647
 
 
 class UsuarioSerializer(serializers.ModelSerializer):
@@ -100,8 +108,35 @@ class ClienteSerializer(serializers.ModelSerializer):
             "status_cadastro",
         ]
 
+    def validate_telefone(self, value):
+        try:
+            return validar_telefone(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.messages) from exc
+
+    def validate_cep(self, value):
+        if not value or not value.strip():
+            return ""
+
+        try:
+            return validar_cep(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.messages) from exc
+
+    def validate_numero_endereco(self, value):
+        return value.strip()
+
 
 class ServicoSerializer(serializers.ModelSerializer):
+    nome = serializers.CharField(
+        max_length=255,
+        trim_whitespace=True,
+    )
+    duracao_padrao_minutos = serializers.IntegerField(
+        min_value=1,
+        max_value=MAX_INTEGER,
+    )
+
     class Meta:
         model = Servico
         fields = "__all__"
@@ -111,6 +146,22 @@ class ServicoSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+    def validate_nome(self, value):
+        if not value:
+            raise serializers.ValidationError(
+                "O nome do serviço é obrigatório."
+            )
+
+        return value
+
+    def validate_duracao_padrao_minutos(self, value):
+        if not 1 <= value <= MAX_INTEGER:
+            raise serializers.ValidationError(
+                "A duração deve ser um número inteiro positivo válido."
+            )
+
+        return value
 
 
 class AgendamentoSerializer(serializers.ModelSerializer):
@@ -174,18 +225,24 @@ class AgendamentoSerializer(serializers.ModelSerializer):
         if profissional is not None:
             if profissional.clinica_id != clinica.pk:
                 raise serializers.ValidationError({
-                    "profissional": "O profissional não pertence à clínica ativa."
+                    "profissional": (
+                        "O profissional não pertence à clínica ativa."
+                    )
                 })
 
             if not profissional.ativo:
                 raise serializers.ValidationError({
-                    "profissional": "Não é possível agendar com um profissional inativo."
+                    "profissional": (
+                        "Não é possível agendar com um profissional inativo."
+                    )
                 })
 
-            if profissional.role.nome != Role.PROFISSIONAL:
-                raise serializers.ValidationError({
-                    "profissional": "O colaborador selecionado não é um profissional."
-                })
+            if profissional.role.nome not in (Role.PROFISSIONAL, Role.ADMIN):
+                 raise serializers.ValidationError({
+                "profissional": (
+                "O colaborador selecionado não pode realizar atendimentos."
+             )
+         })
 
         if servico is not None:
             if servico.clinica_id != clinica.pk:
@@ -201,23 +258,38 @@ class AgendamentoSerializer(serializers.ModelSerializer):
         if pacote is not None:
             if pacote.clinica_id != clinica.pk:
                 raise serializers.ValidationError({
-                    "pacote_origem": "O pacote não pertence à clínica ativa."
+                    "pacote_origem": (
+                        "O pacote não pertence à clínica ativa."
+                    )
                 })
 
             if cliente is not None and pacote.cliente_id != cliente.pk:
                 raise serializers.ValidationError({
-                    "pacote_origem": "O pacote não pertence ao cliente selecionado."
+                    "pacote_origem": (
+                        "O pacote não pertence ao cliente selecionado."
+                    )
                 })
 
             if servico is not None and pacote.servico_id != servico.pk:
                 raise serializers.ValidationError({
-                    "pacote_origem": "O pacote não corresponde ao serviço selecionado."
+                    "pacote_origem": (
+                        "O pacote não corresponde ao serviço selecionado."
+                    )
                 })
 
         return attrs
 
 
 class PacoteSerializer(serializers.ModelSerializer):
+    quantidade_sessoes = serializers.IntegerField(
+        min_value=1,
+        max_value=MAX_INTEGER,
+    )
+    valor_total = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        min_value=0,
+    )
     saldo_sessoes = serializers.SerializerMethodField()
 
     class Meta:
@@ -229,7 +301,6 @@ class PacoteSerializer(serializers.ModelSerializer):
             "servico",
             "quantidade_sessoes",
             "valor_total",
-            "data_vencimento",
             "status",
             "observacoes",
             "saldo_sessoes",
@@ -249,10 +320,11 @@ class PacoteSerializer(serializers.ModelSerializer):
         return obj.saldo_sessoes
 
     def validate_quantidade_sessoes(self, value):
-        if value < 1:
+        if not 1 <= value <= MAX_INTEGER:
             raise serializers.ValidationError(
-                "O pacote precisa ter pelo menos uma sessão."
+                "A quantidade de sessões deve ser um inteiro positivo válido."
             )
+
         return value
 
     def validate_valor_total(self, value):
@@ -260,6 +332,7 @@ class PacoteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 "O valor total do pacote não pode ser negativo."
             )
+
         return value
 
     def validate(self, attrs):
@@ -292,7 +365,9 @@ class PacoteSerializer(serializers.ModelSerializer):
 
         if cliente.status_cadastro != Cliente.ATIVO:
             raise serializers.ValidationError({
-                "cliente": "Não é possível criar um pacote para cliente inativo."
+                "cliente": (
+                    "Não é possível criar um pacote para cliente inativo."
+                )
             })
 
         if servico is None:
@@ -307,7 +382,9 @@ class PacoteSerializer(serializers.ModelSerializer):
 
         if not servico.ativo:
             raise serializers.ValidationError({
-                "servico": "Não é possível contratar um serviço inativo."
+                "servico": (
+                    "Não é possível contratar um serviço inativo."
+                )
             })
 
         return attrs

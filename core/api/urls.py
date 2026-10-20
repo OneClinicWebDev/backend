@@ -20,7 +20,7 @@ router.register(r'pacotes', PacoteViewSet, basename='pacote')
 
 urlpatterns = [
     path('auth/login/', LoginView.as_view(), name='login'),
-    path('auth/logout/', LogoutView.as_view(), name='logout'),
+    path("auth/logout/", LogoutView.as_view(), name="logout"),
     path('auth/criar-clinica/', CadastroClinicaView.as_view(), name='criar_clinica'),
     path('', include(router.urls)),
 ]

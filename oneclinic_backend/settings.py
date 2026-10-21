@@ -1,4 +1,5 @@
 from pathlib import Path
+from corsheaders.defaults import default_headers
 from dotenv import load_dotenv
 import os
 import dj_database_url
@@ -148,13 +149,23 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+_cors_origins = [
+    origem.strip()
+    for origem in os.getenv('CORS_ALLOWED_ORIGINS', '').split(',')
+    if origem.strip()
+]
 
-CORS_ALLOW_ALL_ORIGINS = True
+if _cors_origins:
+    CORS_ALLOWED_ORIGINS = _cors_origins
+    CORS_ALLOW_ALL_ORIGINS = False
+else:
+    CORS_ALLOW_ALL_ORIGINS = True
+
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = list(default_headers) + ['x-clinica-id']
 
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     SECURE_SSL_REDIRECT = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
-

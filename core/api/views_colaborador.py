@@ -1,3 +1,4 @@
+from datetime import date
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
@@ -5,15 +6,24 @@ from rest_framework import status, viewsets
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 
-from core.models import Colaborador, Role, Agendamento, Auditoria
+from core.models import Colaborador, Role, Agendamento, Auditoria, Usuario
 from .base import ClinicaContextMixin
-from .permissions import IsAdmin
+from .permissions import IsAdmin, IsAdminOrSecretario
 from .serializers_core import ColaboradorSerializer
 
 
 class ColaboradorViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
     serializer_class = ColaboradorSerializer
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdminOrSecretario]
+
+    class ColaboradorViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
+        serializer_class = ColaboradorSerializer
+
+    def get_permissions(self):
+  
+        if self.request.method in ['GET', 'HEAD', 'OPTIONS']:
+            return [IsAdminOrSecretario()]
+        return [IsAdmin()]
 
     def get_queryset(self):
         return (
@@ -114,10 +124,26 @@ class ColaboradorViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
     @transaction.atomic
     def perform_create(self, serializer):
         clinica = self.get_clinica()
+        cpf = serializer.validated_data.pop("cpf", None)
+        nome = serializer.validated_data.pop("nome_completo", "")
+
+        if not cpf:
+            raise ValidationError({"cpf": "O CPF é obrigatório para cadastrar o colaborador."})
+
+        try:
+            usuario = Usuario.objects.get(cpf=cpf)
+        except Usuario.DoesNotExist:
+            from datetime import date
+            usuario = Usuario.objects.create_user(
+                cpf=cpf, 
+                nome_completo=nome, 
+                data_nascimento=date(1900, 1, 1),
+                password=None
+            )
 
         try:
             with transaction.atomic():
-                colaborador = serializer.save(clinica=clinica)
+                colaborador = serializer.save(clinica=clinica, usuario=usuario)
         except IntegrityError:
             raise ValidationError({
                 "usuario": (

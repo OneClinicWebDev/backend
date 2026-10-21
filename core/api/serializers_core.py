@@ -57,6 +57,8 @@ class ColaboradorSerializer(serializers.ModelSerializer):
         source="role.nome",
         read_only=True,
     )
+    cpf = serializers.CharField(write_only=True, required=False, max_length=14)
+    nome_completo = serializers.CharField(write_only=True, required=False, max_length=255)
 
     class Meta:
         model = Colaborador
@@ -69,11 +71,15 @@ class ColaboradorSerializer(serializers.ModelSerializer):
             "role_nome",
             "ativo",
             "pode_editar_agenda",
+            "cpf",
+            "nome_completo"
         ]
         read_only_fields = [
             "id",
+            "usuario",
             "usuario_nome",
             "clinica",
+            "role_nome",
         ]
 
 
@@ -82,10 +88,9 @@ class ClienteSerializer(serializers.ModelSerializer):
         source="usuario.nome_completo",
         read_only=True,
     )
-    usuario_cpf = serializers.CharField(
-        source="usuario.cpf",
-        read_only=True,
-    )
+    usuario_cpf = serializers.SerializerMethodField()
+    cpf = serializers.CharField(write_only=True, required=False, max_length=14)
+    nome_completo = serializers.CharField(write_only=True, required=False, max_length=255)
 
     class Meta:
         model = Cliente
@@ -99,14 +104,23 @@ class ClienteSerializer(serializers.ModelSerializer):
             "cep",
             "numero_endereco",
             "status_cadastro",
+            "cpf",
+            "nome_completo"
         ]
         read_only_fields = [
             "id",
+            "usuario",
             "usuario_nome",
             "usuario_cpf",
             "clinica",
             "status_cadastro",
         ]
+
+    def get_usuario_cpf(self, obj):
+        cpf = getattr(obj.usuario, 'cpf', None)
+        if cpf and len(cpf) == 11:
+            return f"***.{cpf[3:6]}.{cpf[6:9]}-**"
+        return cpf
 
     def validate_telefone(self, value):
         try:

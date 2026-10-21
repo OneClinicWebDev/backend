@@ -1,6 +1,7 @@
-from django.db import transaction
+from django.db import IntegrityError, transaction
 
 from rest_framework import status, viewsets
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
 from core.models import Cliente, Auditoria
@@ -54,7 +55,16 @@ class ClienteViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
 
     @transaction.atomic
     def perform_create(self, serializer):
-        cliente = serializer.save(clinica=self.get_clinica())
+        try:
+            with transaction.atomic():
+                cliente = serializer.save(clinica=self.get_clinica())
+        except IntegrityError:
+            raise ValidationError({
+                "usuario": (
+                    "Este usuário já possui cadastro de cliente "
+                    "nesta clínica."
+                )
+            })
 
         self._registrar_auditoria(
             cliente,

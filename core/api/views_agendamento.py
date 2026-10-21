@@ -1,7 +1,10 @@
+import uuid
+from datetime import datetime, time, timedelta
+
 from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
-from django.utils.dateparse import parse_datetime
+from django.utils.dateparse import parse_date, parse_datetime
 
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -37,7 +40,7 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
     permission_classes = [HasClinicaContext]
 
     def get_queryset(self):
-        return (
+        queryset = (
             Agendamento.objects.filter(clinica=self.get_clinica())
             .select_related(
                 "cliente__usuario",
@@ -47,6 +50,97 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
                 "pacote_origem",
             )
         )
+
+        if self.action == "list":
+            queryset = self._aplicar_filtros_listagem(queryset).order_by(
+                "data_hora_inicio",
+                "pk",
+            )
+
+        return queryset
+
+    def _filtro_data(self, valor, campo, fim_exclusivo=False):
+        """
+        Aceita AAAA-MM-DD ou data e hora ISO 8601. Sem fuso, usa o fuso do
+        projeto. Uma data sem hora em data_fim inclui o dia inteiro.
+        """
+        valor = valor.strip()
+
+        try:
+            dia = parse_date(valor)
+            data_hora = None if dia else parse_datetime(valor)
+        except ValueError:
+            dia = None
+            data_hora = None
+
+        if dia is not None:
+            if fim_exclusivo:
+                dia = dia + timedelta(days=1)
+            data_hora = datetime.combine(dia, time.min)
+
+        if data_hora is None:
+            raise ValidationError({
+                campo: (
+                    "Informe uma data (AAAA-MM-DD) ou data e hora "
+                    "em formato ISO 8601."
+                )
+            })
+
+        if timezone.is_naive(data_hora):
+            data_hora = timezone.make_aware(
+                data_hora,
+                timezone.get_current_timezone(),
+            )
+
+        return data_hora
+
+    def _aplicar_filtros_listagem(self, queryset):
+        """
+        Filtros opcionais da listagem (a resposta continua sendo um array):
+        data_inicio, data_fim, profissional, cliente e status. O período
+        retorna os agendamentos que se sobrepõem a [data_inicio, data_fim).
+        """
+        params = self.request.query_params
+
+        data_inicio = params.get("data_inicio")
+        if data_inicio:
+            inicio = self._filtro_data(data_inicio, "data_inicio")
+            queryset = queryset.filter(data_hora_fim__gt=inicio)
+
+        data_fim = params.get("data_fim")
+        if data_fim:
+            fim = self._filtro_data(
+                data_fim,
+                "data_fim",
+                fim_exclusivo=True,
+            )
+            queryset = queryset.filter(data_hora_inicio__lt=fim)
+
+        for campo in ("profissional", "cliente"):
+            valor = params.get(campo)
+
+            if valor:
+                try:
+                    identificador = uuid.UUID(valor)
+                except ValueError:
+                    raise ValidationError({
+                        campo: "Informe um identificador (UUID) válido."
+                    })
+
+                queryset = queryset.filter(**{f"{campo}_id": identificador})
+
+        status_filtro = params.get("status")
+        if status_filtro:
+            if status_filtro not in dict(Agendamento.STATUS_CHOICES):
+                raise ValidationError({
+                    "status": (
+                        "Utilize PENDENTE, CONFIRMADO, CANCELADO ou CONCLUIDO."
+                    )
+                })
+
+            queryset = queryset.filter(status=status_filtro)
+
+        return queryset
 
     def _colaborador_logado(self):
         try:

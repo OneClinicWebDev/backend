@@ -1,4 +1,4 @@
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from rest_framework import status, viewsets
@@ -114,7 +114,17 @@ class ColaboradorViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
     @transaction.atomic
     def perform_create(self, serializer):
         clinica = self.get_clinica()
-        colaborador = serializer.save(clinica=clinica)
+
+        try:
+            with transaction.atomic():
+                colaborador = serializer.save(clinica=clinica)
+        except IntegrityError:
+            raise ValidationError({
+                "usuario": (
+                    "Este usuário já possui vínculo de colaborador "
+                    "nesta clínica."
+                )
+            })
 
         self._registrar_auditoria(
             colaborador,

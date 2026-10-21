@@ -25,7 +25,7 @@ class SecurityTestCase(TestCase):
             password="SenhaForte123",
         )
 
-        self.role_admin = Role.objects.create(nome=Role.ADMIN)
+        self.role_admin = Role.objects.get_or_create(nome=Role.ADMIN)[0]
 
         self.colaborador1 = Colaborador.objects.create(
             usuario=self.user1,

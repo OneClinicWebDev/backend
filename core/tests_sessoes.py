@@ -42,7 +42,7 @@ class SessoesPacoteTestCase(TestCase):
             telefone="47999999999",
         )
 
-        role = Role.objects.create(nome=Role.PROFISSIONAL)
+        role = Role.objects.get_or_create(nome=Role.PROFISSIONAL)[0]
         self.profissional = Colaborador.objects.create(
             usuario=self.usuario_profissional,
             clinica=self.clinica,

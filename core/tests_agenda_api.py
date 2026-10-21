@@ -48,7 +48,7 @@ class AgendamentoAPITestCase(TestCase):
             password="SenhaForte123",
         )
 
-        self.role_admin = Role.objects.create(nome=Role.ADMIN)
+        self.role_admin = Role.objects.get_or_create(nome=Role.ADMIN)[0]
 
         self.admin = Colaborador.objects.create(
             usuario=self.usuario_admin,
@@ -64,9 +64,7 @@ class AgendamentoAPITestCase(TestCase):
             password="SenhaForte123",
         )
 
-        self.role_profissional = Role.objects.create(
-            nome=Role.PROFISSIONAL,
-        )
+        self.role_profissional = Role.objects.get_or_create(nome=Role.PROFISSIONAL)[0]
 
         self.profissional = Colaborador.objects.create(
             usuario=self.usuario_profissional,

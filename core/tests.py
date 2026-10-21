@@ -15,7 +15,7 @@ class AgendamentoConstraintTest(TransactionTestCase):
             telefone="11999999999"
         )
         
-        role_prof = Role.objects.create(nome=Role.PROFISSIONAL)
+        role_prof = Role.objects.get_or_create(nome=Role.PROFISSIONAL)[0]
         self.profissional = Colaborador.objects.create(usuario=self.usuario1, clinica=self.clinica, role=role_prof)
         self.cliente = Cliente.objects.create(usuario=self.usuario2, clinica=self.clinica, telefone="11999999999")
         self.servico = Servico.objects.create(clinica=self.clinica, nome="Servico A", duracao_padrao_minutos=30)

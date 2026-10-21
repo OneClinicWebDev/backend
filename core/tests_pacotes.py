@@ -49,7 +49,7 @@ class PacotesAPITestCase(APITestCase):
             telefone="47988888888",
         )
 
-        self.role_admin = Role.objects.create(nome=Role.ADMIN)
+        self.role_admin = Role.objects.get_or_create(nome=Role.ADMIN)[0]
 
         Colaborador.objects.create(
             usuario=self.admin,

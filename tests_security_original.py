@@ -20,7 +20,7 @@ class SecurityTestCase(APITestCase):
             password="SenhaForte123",
         )
 
-        role_admin = Role.objects.create(nome=Role.ADMIN)
+        role_admin = Role.objects.get_or_create(nome=Role.ADMIN)[0]
 
         Colaborador.objects.create(
             usuario=self.user1,

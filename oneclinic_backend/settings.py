@@ -1,9 +1,9 @@
 from pathlib import Path
 from corsheaders.defaults import default_headers
 from dotenv import load_dotenv
+from datetime import timedelta
 import os
 import dj_database_url
-from datetime import timedelta
 
 load_dotenv()
 
@@ -27,21 +27,21 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.AnonRateThrottle',
-        'rest_framework.throttling.UserRateThrottle'
+        'rest_framework.throttling.UserRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': '20/minute',   
-        'user': '120/minute',  
-    }
+        'anon': '20/minute',
+        'user': '120/minute',
+    },
 }
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
-    "ROTATE_REFRESH_TOKENS": True,
-    "BLACKLIST_AFTER_ROTATION": True,
-    "USER_ID_FIELD": "id",
-    "USER_ID_CLAIM": "user_id",
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
+    'USER_ID_FIELD': 'id',
+    'USER_ID_CLAIM': 'user_id',
 }
 
 INSTALLED_APPS = [
@@ -68,7 +68,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'core.middleware.ClinicaMiddleware', 
+    'core.middleware.ClinicaMiddleware',
 ]
 
 ROOT_URLCONF = 'oneclinic_backend.urls'
@@ -91,8 +91,11 @@ TEMPLATES = [
 DATABASE_URL = os.getenv('DATABASE_URL')
 
 if DATABASE_URL:
-    db_from_env = dj_database_url.parse(DATABASE_URL, conn_max_age=600)
-    db_from_env['TEST'] = {'NAME': 'test_oneclinic_novo'}  
+    db_from_env = dj_database_url.parse(
+        DATABASE_URL,
+        conn_max_age=600,
+    )
+    db_from_env['TEST'] = {'NAME': 'test_oneclinic_novo'}
     DATABASES = {'default': db_from_env}
 else:
     DATABASES = {
@@ -104,7 +107,7 @@ else:
             'HOST': os.getenv('DB_HOST'),
             'PORT': os.getenv('DB_PORT'),
             'OPTIONS': {'sslmode': 'require'},
-            'TEST': {                                    
+            'TEST': {
                 'NAME': 'test_oneclinic_novo',
             },
         }
@@ -128,7 +131,7 @@ AUTH_PASSWORD_VALIDATORS = [
     },
     {
         'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-        'OPTIONS': {'min_length': 8}
+        'OPTIONS': {'min_length': 8},
     },
     {
         'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
@@ -149,18 +152,22 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-_cors_origins = [
-    origem.strip()
-    for origem in os.getenv('CORS_ALLOWED_ORIGINS', '').split(',')
+
+CORS_ORIGINS_PADRAO = [
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+]
+
+CORS_ALLOWED_ORIGINS = [
+    origem.strip().rstrip('/')
+    for origem in os.getenv(
+        'CORS_ALLOWED_ORIGINS',
+        ','.join(CORS_ORIGINS_PADRAO),
+    ).split(',')
     if origem.strip()
 ]
 
-if _cors_origins:
-    CORS_ALLOWED_ORIGINS = _cors_origins
-    CORS_ALLOW_ALL_ORIGINS = False
-else:
-    CORS_ALLOW_ALL_ORIGINS = True
-
+CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = list(default_headers) + ['x-clinica-id']
 

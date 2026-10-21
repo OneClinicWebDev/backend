@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import permissions
 
 from core.models import Role, Colaborador
@@ -40,6 +41,7 @@ class HasClinicaContext(permissions.BasePermission):
             )
         except (
             Colaborador.DoesNotExist,
+            DjangoValidationError,
             TypeError,
             ValueError,
         ):

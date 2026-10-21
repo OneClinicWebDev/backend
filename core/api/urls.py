@@ -1,7 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
-from .views_auth import LoginView, LogoutView
+from .views_auth import LoginView, LogoutView, MeView
 from .views_cadastro import CadastroClinicaView
 from .views_cliente import ClienteViewSet
 from .views_colaborador import ColaboradorViewSet
@@ -21,6 +21,7 @@ router.register(r'pacotes', PacoteViewSet, basename='pacote')
 urlpatterns = [
     path('auth/login/', LoginView.as_view(), name='login'),
     path("auth/logout/", LogoutView.as_view(), name="logout"),
+    path("auth/me/", MeView.as_view(), name="me"),
     path('auth/criar-clinica/', CadastroClinicaView.as_view(), name='criar_clinica'),
     path('', include(router.urls)),
 ]

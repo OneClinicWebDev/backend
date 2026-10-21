@@ -6,7 +6,42 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from core.models import Colaborador
 from .serializers_auth import LoginSerializer
 
+def _dados_usuario(user):
+    return {
+        "id": str(user.id),
+        "cpf": user.cpf,
+        "nome": user.nome_completo,
+    }
+
+
+def _vinculos_do_usuario(user):
+    """
+    Clínicas que o usuário pode selecionar: vínculos de colaborador ativos
+    em clínicas ativas (as mesmas condições exigidas por HasClinicaContext).
+    """
+    vinculos = (
+        Colaborador.objects.filter(
+            usuario=user,
+            ativo=True,
+            clinica__ativo=True,
+        )
+        .select_related("clinica", "role")
+        .order_by("clinica__nome_fantasia", "clinica_id")
+    )
+
+    return [
+        {
+            "clinica_id": str(v.clinica.id),
+            "clinica_nome": v.clinica.nome_fantasia,
+            "role": v.role.nome,
+            "pode_editar_agenda": v.pode_editar_agenda,
+        }
+        for v in vinculos
+    ]
+
+
 class LoginView(APIView):
+    authentication_classes = []
     permission_classes = []
 
     def post(self, request):
@@ -16,29 +51,25 @@ class LoginView(APIView):
         user = serializer.validated_data["user"]
         refresh = RefreshToken.for_user(user)
 
-        vinculos = Colaborador.objects.filter(
-            usuario=user, 
-            ativo=True
-        ).select_related("clinica", "role")
-
-        clinicas_disponiveis = [
-            {
-                "clinica_id": str(v.clinica.id),
-                "clinica_nome": v.clinica.nome_fantasia,
-                "role": v.role.nome,
-                "pode_editar_agenda": v.pode_editar_agenda
-            } for v in vinculos
-        ]
-
         return Response({
             "access": str(refresh.access_token),
             "refresh": str(refresh),
-            "usuario": {
-                "id": str(user.id),
-                "cpf": user.cpf,
-                "nome": user.nome_completo
-            },
-            "vinculos": clinicas_disponiveis
+            "usuario": _dados_usuario(user),
+            "vinculos": _vinculos_do_usuario(user),
+        })
+
+
+class MeView(APIView):
+    """
+    Devolve o usuário autenticado e suas clínicas selecionáveis, para o
+    frontend restaurar a sessão sem novo login. Não exige X-Clinica-ID.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response({
+            "usuario": _dados_usuario(request.user),
+            "vinculos": _vinculos_do_usuario(request.user),
         })
 
 

@@ -651,7 +651,7 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
             Auditoria.CREATE,
             dados_novos=self._snapshot(agendamento),
         )
-
+        
     @transaction.atomic
     def perform_update(self, serializer):
         clinica = self.get_clinica()
@@ -685,14 +685,19 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
         self._validar_cliente_ativo(cliente, clinica)
         self._validar_autonomia_agenda(clinica, profissional.id)
 
-        self._validar_conflitos(
+        conflitos = self._buscar_conflitos(
             clinica,
             profissional.id,
             cliente.id,
             inicio,
             fim,
             agendamento_id=agendamento.id,
-        )
+        ).filter(status=Agendamento.CONFIRMADO)
+
+        if conflitos.exists():
+            raise ConflictException(
+                "Existe um agendamento CONFIRMADO no mesmo intervalo."
+            )
 
         anteriores = self._snapshot(agendamento)
 

@@ -16,11 +16,7 @@ class ColaboradorViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
     serializer_class = ColaboradorSerializer
     permission_classes = [IsAdminOrSecretario]
 
-    class ColaboradorViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
-        serializer_class = ColaboradorSerializer
-
     def get_permissions(self):
-  
         if self.request.method in ['GET', 'HEAD', 'OPTIONS']:
             return [IsAdminOrSecretario()]
         return [IsAdmin()]
@@ -29,8 +25,8 @@ class ColaboradorViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
         return (
             Colaborador.objects.filter(clinica=self.get_clinica())
             .select_related("usuario", "clinica", "role")
+            .prefetch_related("especialidades")
         )
-
     def _snapshot(self, colaborador):
         return {
             "usuario_id": str(colaborador.usuario_id),

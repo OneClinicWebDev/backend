@@ -11,6 +11,7 @@ from core.models import (
     Agendamento,
     Pacote,
     SessaoPacote,
+    Especialidade,
 )
 from core.validators import (
     validar_telefone,
@@ -47,7 +48,6 @@ class RoleSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = fields
 
-
 class ColaboradorSerializer(serializers.ModelSerializer):
     usuario_nome = serializers.CharField(
         source="usuario.nome_completo",
@@ -59,6 +59,16 @@ class ColaboradorSerializer(serializers.ModelSerializer):
     )
     cpf = serializers.CharField(write_only=True, required=False, max_length=14)
     nome_completo = serializers.CharField(write_only=True, required=False, max_length=255)
+    
+    # A SOLUÇÃO: write_only=True impede o DRF de quebrar a leitura, 
+    # e nós injetamos o valor no to_representation manualmente.
+    especialidades = serializers.ListField(
+        child=serializers.CharField(max_length=100),
+        required=False,
+        allow_empty=True,
+        allow_null=True,
+        write_only=True 
+    )
 
     class Meta:
         model = Colaborador
@@ -72,7 +82,8 @@ class ColaboradorSerializer(serializers.ModelSerializer):
             "ativo",
             "pode_editar_agenda",
             "cpf",
-            "nome_completo"
+            "nome_completo",
+            "especialidades",
         ]
         read_only_fields = [
             "id",
@@ -82,7 +93,49 @@ class ColaboradorSerializer(serializers.ModelSerializer):
             "role_nome",
         ]
 
+    def _processar_especialidades(self, colaborador, nomes_especialidades):
+        role_obj = colaborador.role
+        is_profissional = role_obj and str(role_obj.nome).strip().upper() == "PROFISSIONAL"
 
+        if not is_profissional:
+            colaborador.especialidades.clear()
+        elif nomes_especialidades is not None:
+            clinica = colaborador.clinica
+            objs = []
+            for nome in nomes_especialidades:
+                nome_formatado = str(nome).strip().title()
+                if nome_formatado:
+                    esp, _ = Especialidade.objects.get_or_create(
+                        clinica=clinica, 
+                        nome=nome_formatado
+                    )
+                    objs.append(esp)
+            colaborador.especialidades.set(objs)
+
+        # Remove especialidades órfãs da clínica
+        Especialidade.objects.filter(
+            clinica=colaborador.clinica, 
+            profissionais__isnull=True
+        ).delete()
+
+    def create(self, validated_data):
+        especialidades = validated_data.pop("especialidades", [])
+        colaborador = super().create(validated_data)
+        self._processar_especialidades(colaborador, especialidades)
+        return colaborador
+
+    def update(self, instance, validated_data):
+        especialidades = validated_data.pop("especialidades", None)
+        colaborador = super().update(instance, validated_data)
+        if especialidades is not None:
+            self._processar_especialidades(colaborador, especialidades)
+        return colaborador
+
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        # O DRF ignorou a serialização acima, então nós injetamos aqui com segurança
+        representation["especialidades"] = [esp.nome for esp in instance.especialidades.all()]
+        return representation
 class ClienteSerializer(serializers.ModelSerializer):
     usuario_nome = serializers.CharField(
         source="usuario.nome_completo",

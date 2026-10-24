@@ -1,18 +1,16 @@
-
 from rest_framework import serializers
-
 from core.models import (
     Usuario,
     Clinica,
     Role,
     Colaborador,
     Cliente,
+    Especialidade,
     Servico,
     Agendamento,
     Pacote,
     SessaoPacote,
 )
-
 
 class UsuarioSerializer(serializers.ModelSerializer):
     class Meta:
@@ -25,7 +23,6 @@ class UsuarioSerializer(serializers.ModelSerializer):
             "telefone",
         ]
         read_only_fields = fields
-
 
 class ClinicaSerializer(serializers.ModelSerializer):
     class Meta:
@@ -42,13 +39,11 @@ class ClinicaSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
-
 class RoleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Role
         fields = "__all__"
         read_only_fields = ["id", "nome"]
-
 
 class ColaboradorSerializer(serializers.ModelSerializer):
     usuario_nome = serializers.CharField(
@@ -58,6 +53,13 @@ class ColaboradorSerializer(serializers.ModelSerializer):
     role_nome = serializers.CharField(
         source="role.nome",
         read_only=True,
+    )
+    especialidades = serializers.ListField(
+        child=serializers.CharField(max_length=100),
+        required=False,
+        allow_empty=True,
+        allow_null=True,
+        write_only=False
     )
 
     class Meta:
@@ -71,6 +73,7 @@ class ColaboradorSerializer(serializers.ModelSerializer):
             "role_nome",
             "ativo",
             "pode_editar_agenda",
+            "especialidades",
             "created_at",
             "updated_at",
         ]
@@ -84,6 +87,52 @@ class ColaboradorSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
+    def create(self, validated_data):
+        nomes_especialidades = validated_data.pop("especialidades", [])
+        colaborador = super().create(validated_data)
+        
+        if str(colaborador.role.nome).strip().upper() == "PROFISSIONAL" and nomes_especialidades:
+            objs = []
+            for nome in nomes_especialidades:
+                nome_formatado = str(nome).strip().title()
+                if nome_formatado:
+                    esp, _ = Especialidade.objects.get_or_create(
+                        clinica=colaborador.clinica, 
+                        nome=nome_formatado
+                    )
+                    objs.append(esp)
+            colaborador.especialidades.set(objs)
+            
+        return colaborador
+
+    def update(self, instance, validated_data):
+        nomes_especialidades = validated_data.pop("especialidades", None)
+        colaborador = super().update(instance, validated_data)
+        role_nome = str(colaborador.role.nome).strip().upper()
+        if role_nome != "PROFISSIONAL":
+            colaborador.especialidades.clear()
+        elif nomes_especialidades is not None:
+            objs = []
+            for nome in nomes_especialidades:
+                nome_formatado = str(nome).strip().title()
+                if nome_formatado:
+                    esp, _ = Especialidade.objects.get_or_create(
+                        clinica=colaborador.clinica, 
+                        nome=nome_formatado
+                    )
+                    objs.append(esp)
+            colaborador.especialidades.set(objs)
+        Especialidade.objects.filter(
+            clinica=colaborador.clinica, 
+            profissionais__isnull=True
+        ).delete()
+        
+        return colaborador
+
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        representation["especialidades"] = [esp.nome for esp in instance.especialidades.all()]
+        return representation
 
 class ClienteSerializer(serializers.ModelSerializer):
     usuario_nome = serializers.CharField(
@@ -121,7 +170,6 @@ class ClienteSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
-
 class ServicoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Servico
@@ -131,7 +179,6 @@ class ServicoSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-
 
 class AgendamentoSerializer(serializers.ModelSerializer):
     cliente_nome = serializers.CharField(
@@ -218,7 +265,6 @@ class AgendamentoSerializer(serializers.ModelSerializer):
 
         return attrs
 
-
 class PacoteSerializer(serializers.ModelSerializer):
     saldo_sessoes = serializers.IntegerField(read_only=True)
 
@@ -273,7 +319,6 @@ class PacoteSerializer(serializers.ModelSerializer):
             )
 
         return attrs
-
 
 class SessaoPacoteSerializer(serializers.ModelSerializer):
     class Meta:

@@ -1,4 +1,3 @@
-
 from django import forms
 from django.contrib import admin
 from django.contrib.auth.hashers import make_password
@@ -11,6 +10,7 @@ from .models import (
     Cliente,
     Clinica,
     Colaborador,
+    Especialidade,
     HistoricoSessao,
     Pacote,
     Role,
@@ -26,10 +26,7 @@ from .validators import (
     validar_cep,
 )
 
-
 MAX_INTEGER = 2147483647
-
-
 
 def widget_numerico(maxlength):
     return forms.TextInput(
@@ -102,7 +99,6 @@ class UsuarioAdminForm(ModelForm):
 
         return nome
 
-
 class ClinicaAdminForm(ModelForm):
     cnpj = forms.CharField(
         max_length=14,
@@ -147,7 +143,6 @@ class ClinicaAdminForm(ModelForm):
 
         return valor
 
-
 class ClienteAdminForm(ModelForm):
     telefone = forms.CharField(
         max_length=11,
@@ -185,7 +180,6 @@ class ClienteAdminForm(ModelForm):
     def clean_numero_endereco(self):
         return self.cleaned_data.get("numero_endereco", "").strip()
 
-
 class ServicoAdminForm(ModelForm):
     class Meta:
         model = Servico
@@ -208,7 +202,6 @@ class ServicoAdminForm(ModelForm):
             )
 
         return duracao
-
 
 class PacoteAdminForm(ModelForm):
     class Meta:
@@ -337,7 +330,6 @@ class ClienteAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return False
 
-
 @admin.register(Servico)
 class ServicoAdmin(admin.ModelAdmin):
     form = ServicoAdminForm
@@ -376,27 +368,37 @@ class PacoteAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return False
 
-
 @admin.register(Role)
 class RoleAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return False
 
+@admin.register(Especialidade)
+class EspecialidadeAdmin(admin.ModelAdmin):
+    list_display = ("nome", "clinica")
+    list_filter = ("clinica",)
+    search_fields = ("nome", "clinica__nome_fantasia")
 
 @admin.register(Colaborador)
 class ColaboradorAdmin(admin.ModelAdmin):
+    list_display = ("usuario", "clinica", "role", "ativo")
+    list_filter = ("clinica", "role", "ativo")
+    search_fields = ("usuario__nome_completo", "clinica__nome_fantasia")
+    filter_horizontal = ("especialidades",)
+
     def has_delete_permission(self, request, obj=None):
         return False
-
 
 @admin.register(Agendamento)
 class AgendamentoAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return False
+
 @admin.register(SessaoPacote)
 class SessaoPacoteAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return False
+
 @admin.register(Auditoria)
 class AuditoriaAdmin(admin.ModelAdmin):
     list_display = (
@@ -444,6 +446,7 @@ class AuditoriaAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
 @admin.register(HistoricoSessao)
 class HistoricoSessaoAdmin(admin.ModelAdmin):
     list_display = (

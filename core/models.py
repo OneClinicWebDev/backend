@@ -7,10 +7,9 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import F, Q
 from .validators import validar_cpf, validar_cnpj
+
 validate_cpf = validar_cpf
 validate_cnpj = validar_cnpj
-
-
 
 class UsuarioManager(BaseUserManager):
     def create_user(
@@ -23,13 +22,10 @@ class UsuarioManager(BaseUserManager):
     ):
         if not cpf:
             raise ValueError("O CPF é obrigatório.")
-
         cpf = validar_cpf(cpf)
-
         extra_fields.setdefault("is_staff", False)
         extra_fields.setdefault("is_superuser", False)
         extra_fields.setdefault("is_active", True)
-
         user = self.model(
             cpf=cpf,
             nome_completo=nome_completo,
@@ -51,13 +47,10 @@ class UsuarioManager(BaseUserManager):
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
         extra_fields.setdefault("is_active", True)
-
         if extra_fields.get("is_staff") is not True:
             raise ValueError("Superuser precisa ter is_staff=True.")
-
         if extra_fields.get("is_superuser") is not True:
             raise ValueError("Superuser precisa ter is_superuser=True.")
-
         return self.create_user(
             cpf=cpf,
             nome_completo=nome_completo,
@@ -65,7 +58,6 @@ class UsuarioManager(BaseUserManager):
             password=password,
             **extra_fields,
         )
-
 
 class Usuario(AbstractBaseUser):
     id = models.UUIDField(
@@ -86,9 +78,7 @@ class Usuario(AbstractBaseUser):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     is_active = models.BooleanField(default=True)
-
     objects = UsuarioManager()
-
     USERNAME_FIELD = "cpf"
     REQUIRED_FIELDS = ["nome_completo", "data_nascimento"]
 
@@ -103,7 +93,6 @@ class Usuario(AbstractBaseUser):
 
     def has_module_perms(self, app_label):
         return self.is_superuser
-
 
 class Clinica(models.Model):
     id = models.UUIDField(
@@ -141,18 +130,15 @@ class Clinica(models.Model):
     def __str__(self):
         return self.nome_fantasia
 
-
 class Role(models.Model):
     ADMIN = "ADMIN"
     SECRETARIO = "SECRETARIO"
     PROFISSIONAL = "PROFISSIONAL"
-
     ROLE_CHOICES = [
         (ADMIN, "Administrador"),
         (SECRETARIO, "Secretário"),
         (PROFISSIONAL, "Profissional"),
     ]
-
     nome = models.CharField(
         max_length=20,
         choices=ROLE_CHOICES,
@@ -165,16 +151,33 @@ class Role(models.Model):
     def __str__(self):
         return self.nome
 
+class Especialidade(models.Model):
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+    )
+    clinica = models.ForeignKey(
+        Clinica,
+        on_delete=models.CASCADE,
+        related_name="especialidades"
+    )
+    nome = models.CharField(max_length=100)
+
+    class Meta:
+        db_table = "especialidades"
+        unique_together = ("clinica", "nome")
+
+    def __str__(self):
+        return self.nome
 
 class Cliente(models.Model):
     ATIVO = "ATIVO"
     INATIVO = "INATIVO"
-
     STATUS_CHOICES = [
         (ATIVO, "Ativo"),
         (INATIVO, "Inativo"),
     ]
-
     id = models.UUIDField(
         primary_key=True,
         default=uuid.uuid4,
@@ -208,7 +211,6 @@ class Cliente(models.Model):
     def __str__(self):
         return self.usuario.nome_completo
 
-
 class Colaborador(models.Model):
     id = models.UUIDField(
         primary_key=True,
@@ -231,6 +233,11 @@ class Colaborador(models.Model):
     )
     ativo = models.BooleanField(default=True)
     pode_editar_agenda = models.BooleanField(default=False)
+    especialidades = models.ManyToManyField(
+        Especialidade,
+        related_name="profissionais",
+        blank=True
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -240,7 +247,6 @@ class Colaborador(models.Model):
 
     def __str__(self):
         return f"{self.usuario.nome_completo} - {self.clinica.nome_fantasia}"
-
 
 class Servico(models.Model):
     clinica = models.ForeignKey(
@@ -260,18 +266,15 @@ class Servico(models.Model):
     def __str__(self):
         return self.nome
 
-
 class Pacote(models.Model):
     ATIVO = "ATIVO"
     CONCLUIDO = "CONCLUIDO"
     CANCELADO = "CANCELADO"
-
     STATUS_CHOICES = [
         (ATIVO, "Ativo"),
         (CONCLUIDO, "Concluído"),
         (CANCELADO, "Cancelado"),
     ]
-
     clinica = models.ForeignKey(
         Clinica,
         on_delete=models.PROTECT,
@@ -323,31 +326,27 @@ class ExclusaoFisicaBloqueadaQuerySet(models.QuerySet):
         )
 
 objects = ExclusaoFisicaBloqueadaQuerySet.as_manager()
+
 class Agendamento(models.Model):
     PENDENTE = "PENDENTE"
     CONFIRMADO = "CONFIRMADO"
     CONCLUIDO = "CONCLUIDO"
     CANCELADO = "CANCELADO"
-
     STATUS_CHOICES = [
         (PENDENTE, "Pendente"),
         (CONFIRMADO, "Confirmado"),
         (CONCLUIDO, "Concluído"),
         (CANCELADO, "Cancelado"),
     ]
-
     AGUARDANDO_RESULTADO = "AGUARDANDO_RESULTADO"
     REALIZADO = "REALIZADO"
     FALTA = "FALTA"
-
     RESULTADO_CHOICES = [
         (AGUARDANDO_RESULTADO, "Aguardando resultado"),
         (REALIZADO, "Realizado"),
         (FALTA, "Falta"),
     ]
-
     objects = ExclusaoFisicaBloqueadaQuerySet.as_manager()
-
     clinica = models.ForeignKey(
         Clinica,
         on_delete=models.PROTECT,
@@ -436,8 +435,7 @@ class Agendamento(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError(
-            "Agendamentos não podem ser excluídos fisicamente. "
-            "Utilize o cancelamento."
+            "Agendamentos não podem ser excluídos fisicamente. Utilize o cancelamento."
         )
 
 class SessaoPacote(models.Model):
@@ -446,7 +444,6 @@ class SessaoPacote(models.Model):
     UTILIZADA = "UTILIZADA"
     PERDIDA = "PERDIDA"
     CANCELADA = "CANCELADA"
-
     STATUS_CHOICES = [
         (DISPONIVEL, "Disponível"),
         (AGENDADA, "Agendada"),
@@ -454,9 +451,7 @@ class SessaoPacote(models.Model):
         (PERDIDA, "Perdida"),
         (CANCELADA, "Cancelada"),
     ]
-
     objects = ExclusaoFisicaBloqueadaQuerySet.as_manager()
-
     pacote = models.ForeignKey(
         Pacote,
         on_delete=models.PROTECT,
@@ -549,23 +544,20 @@ class Auditoria(models.Model):
     UPDATE = "UPDATE"
     DELETE = "DELETE"
     DEACTIVATE = "DEACTIVATE"
-
     ACAO_CHOICES = [
         (CREATE, "Criação"),
         (UPDATE, "Atualização"),
         (DELETE, "Exclusão"),
         (DEACTIVATE, "Desativação"),
     ]
-
     ORIGEM_CHOICES = [
         ("USUARIO", "Usuário via API"),
         ("SISTEMA", "Rotina Automática / Sistema"),
     ]
-
     clinica = models.ForeignKey(
-    Clinica,
-    on_delete=models.PROTECT,
-    related_name="auditorias",
+        Clinica,
+        on_delete=models.PROTECT,
+        related_name="auditorias",
     )   
     usuario = models.ForeignKey(
         settings.AUTH_USER_MODEL,

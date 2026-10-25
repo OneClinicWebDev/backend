@@ -1,3 +1,4 @@
+
 from django import forms
 from django.contrib import admin
 from django.contrib.auth.hashers import make_password
@@ -12,6 +13,7 @@ from .models import (
     Colaborador,
     Especialidade,
     HistoricoSessao,
+    ModeloPacote,
     Pacote,
     Role,
     Servico,
@@ -28,6 +30,7 @@ from .validators import (
 
 MAX_INTEGER = 2147483647
 
+
 def widget_numerico(maxlength):
     return forms.TextInput(
         attrs={
@@ -41,6 +44,7 @@ def widget_numerico(maxlength):
             ),
         }
     )
+
 
 class UsuarioAdminForm(ModelForm):
     cpf = forms.CharField(
@@ -99,6 +103,7 @@ class UsuarioAdminForm(ModelForm):
 
         return nome
 
+
 class ClinicaAdminForm(ModelForm):
     cnpj = forms.CharField(
         max_length=14,
@@ -143,6 +148,7 @@ class ClinicaAdminForm(ModelForm):
 
         return valor
 
+
 class ClienteAdminForm(ModelForm):
     telefone = forms.CharField(
         max_length=11,
@@ -180,6 +186,7 @@ class ClienteAdminForm(ModelForm):
     def clean_numero_endereco(self):
         return self.cleaned_data.get("numero_endereco", "").strip()
 
+
 class ServicoAdminForm(ModelForm):
     class Meta:
         model = Servico
@@ -202,6 +209,64 @@ class ServicoAdminForm(ModelForm):
             )
 
         return duracao
+
+
+class ModeloPacoteAdminForm(ModelForm):
+    class Meta:
+        model = ModeloPacote
+        fields = "__all__"
+
+    def clean_nome(self):
+        nome = self.cleaned_data["nome"].strip()
+
+        if not nome:
+            raise ValidationError(
+                "O nome do modelo de pacote é obrigatório."
+            )
+
+        return nome
+
+    def clean_quantidade_sessoes(self):
+        quantidade = self.cleaned_data["quantidade_sessoes"]
+
+        if not 1 <= quantidade <= MAX_INTEGER:
+            raise ValidationError(
+                "A quantidade de sessões deve ser um inteiro positivo válido."
+            )
+
+        return quantidade
+
+    def clean_valor_total(self):
+        valor = self.cleaned_data["valor_total"]
+
+        if valor < 0:
+            raise ValidationError(
+                "O valor total do modelo de pacote não pode ser negativo."
+            )
+
+        return valor
+
+    def clean_categoria(self):
+        return self.cleaned_data.get("categoria", "").strip()
+
+    def clean_descricao(self):
+        return self.cleaned_data.get("descricao", "").strip()
+
+    def clean(self):
+        cleaned_data = super().clean()
+
+        clinica = cleaned_data.get("clinica")
+        servico = cleaned_data.get("servico")
+
+        if clinica is not None and servico is not None:
+            if servico.clinica_id != clinica.pk:
+                self.add_error(
+                    "servico",
+                    "O serviço não pertence à clínica selecionada.",
+                )
+
+        return cleaned_data
+
 
 class PacoteAdminForm(ModelForm):
     class Meta:
@@ -234,6 +299,7 @@ class PacoteAdminForm(ModelForm):
         clinica = cleaned_data.get("clinica")
         cliente = cleaned_data.get("cliente")
         servico = cleaned_data.get("servico")
+        modelo = cleaned_data.get("modelo")
 
         if clinica is not None and cliente is not None:
             if cliente.clinica_id != clinica.pk:
@@ -249,12 +315,26 @@ class PacoteAdminForm(ModelForm):
                     "O serviço não pertence à clínica selecionada.",
                 )
 
+        if modelo is not None and clinica is not None:
+            if modelo.clinica_id != clinica.pk:
+                self.add_error(
+                    "modelo",
+                    "O modelo de pacote não pertence à clínica selecionada.",
+                )
+
+        if modelo is not None and servico is not None:
+            if modelo.servico_id != servico.pk:
+                self.add_error(
+                    "modelo",
+                    "O serviço não corresponde ao modelo de pacote.",
+                )
+
         return cleaned_data
+
 
 @admin.register(Clinica)
 class ClinicaAdmin(admin.ModelAdmin):
     form = ClinicaAdminForm
-
     list_display = (
         "nome_fantasia",
         "razao_social",
@@ -269,10 +349,10 @@ class ClinicaAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return False
 
+
 @admin.register(Usuario)
 class UsuarioAdmin(admin.ModelAdmin):
     form = UsuarioAdminForm
-
     list_display = (
         "cpf",
         "nome_completo",
@@ -318,10 +398,10 @@ class UsuarioAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return False
 
+
 @admin.register(Cliente)
 class ClienteAdmin(admin.ModelAdmin):
     form = ClienteAdminForm
-
     list_display = ("usuario", "clinica", "telefone", "status_cadastro")
     search_fields = ("usuario__nome_completo", "usuario__cpf")
     list_filter = ("status_cadastro",)
@@ -330,10 +410,10 @@ class ClienteAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return False
 
+
 @admin.register(Servico)
 class ServicoAdmin(admin.ModelAdmin):
     form = ServicoAdminForm
-
     list_display = (
         "nome",
         "clinica",
@@ -347,10 +427,29 @@ class ServicoAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return False
 
+
+@admin.register(ModeloPacote)
+class ModeloPacoteAdmin(admin.ModelAdmin):
+    form = ModeloPacoteAdminForm
+    list_display = (
+        "nome",
+        "clinica",
+        "servico",
+        "quantidade_sessoes",
+        "valor_total",
+        "ativo",
+    )
+    search_fields = ("nome", "servico__nome")
+    list_filter = ("clinica", "ativo")
+    readonly_fields = ("id", "created_at", "updated_at")
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
 @admin.register(Pacote)
 class PacoteAdmin(admin.ModelAdmin):
     form = PacoteAdminForm
-
     list_display = (
         "cliente",
         "servico",
@@ -368,16 +467,19 @@ class PacoteAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return False
 
+
 @admin.register(Role)
 class RoleAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return False
+
 
 @admin.register(Especialidade)
 class EspecialidadeAdmin(admin.ModelAdmin):
     list_display = ("nome", "clinica")
     list_filter = ("clinica",)
     search_fields = ("nome", "clinica__nome_fantasia")
+
 
 @admin.register(Colaborador)
 class ColaboradorAdmin(admin.ModelAdmin):
@@ -389,15 +491,18 @@ class ColaboradorAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return False
 
+
 @admin.register(Agendamento)
 class AgendamentoAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return False
 
+
 @admin.register(SessaoPacote)
 class SessaoPacoteAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return False
+
 
 @admin.register(Auditoria)
 class AuditoriaAdmin(admin.ModelAdmin):
@@ -446,6 +551,7 @@ class AuditoriaAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
 
 @admin.register(HistoricoSessao)
 class HistoricoSessaoAdmin(admin.ModelAdmin):

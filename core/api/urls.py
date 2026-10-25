@@ -9,14 +9,16 @@ from .views_servico import ServicoViewSet
 from .views_agendamento import AgendamentoViewSet
 from .views_pacote import PacoteViewSet
 from .views_clinica import ClinicaViewSet
+from .views_modelo_pacote import ModeloPacoteViewSet
 
 router = DefaultRouter()
-router.register(r'clinica', ClinicaViewSet, basename='clinica')
-router.register(r'clientes', ClienteViewSet, basename='cliente')
-router.register(r'colaboradores', ColaboradorViewSet, basename='colaborador')
-router.register(r'servicos', ServicoViewSet, basename='servico')
-router.register(r'agendamentos', AgendamentoViewSet, basename='agendamento')
-router.register(r'pacotes', PacoteViewSet, basename='pacote')
+router.register(r"clinica", ClinicaViewSet, basename="clinica")
+router.register(r"clientes", ClienteViewSet, basename="cliente")
+router.register(r"colaboradores", ColaboradorViewSet, basename="colaborador")
+router.register(r"servicos", ServicoViewSet, basename="servico")
+router.register(r"modelos-pacote", ModeloPacoteViewSet, basename="modelo-pacote")
+router.register(r"agendamentos", AgendamentoViewSet, basename="agendamento")
+router.register(r"pacotes", PacoteViewSet, basename="pacote")
 
 urlpatterns = [
     path('auth/login/', LoginView.as_view(), name='login'),

@@ -9,7 +9,6 @@ class BaseTenantViewSet(viewsets.ModelViewSet):
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
-        # Se o usuário mandou um ID de clínica no header/query, mas o middleware não encontrou a clínica (porque ele não pertence a ela)
         clinica_id = request.headers.get("X-Clinica-ID")
         if clinica_id and not request.clinica:
             raise PermissionDenied("Você não tem permissão para acessar esta clínica.")

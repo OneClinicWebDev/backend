@@ -32,6 +32,7 @@ class PacoteViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
     
     def _snapshot(self, pacote):
         return {
+            "modelo_id": str(pacote.modelo_id) if pacote.modelo_id else None,
             "status": pacote.status,
             "quantidade_sessoes": pacote.quantidade_sessoes,
             "cliente_id": str(pacote.cliente_id),
@@ -63,11 +64,32 @@ class PacoteViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
             user_agent=self.request.META.get("HTTP_USER_AGENT", ""),
         )
 
+    
     @transaction.atomic
     def perform_create(self, serializer):
+        modelo = serializer.validated_data.get("modelo")
+
+        if modelo is None:
+            raise ValidationError({
+                "modelo": "Selecione um modelo ativo do catálogo."
+            })
+
+        if modelo.clinica_id != self.get_clinica().pk:
+            raise ValidationError({
+                "modelo": "O modelo não pertence à clínica ativa."
+            })
+
+        if not modelo.ativo:
+            raise ValidationError({
+                "modelo": "Não é possível vender um modelo inativo."
+            })
+
         pacote = serializer.save(
             clinica=self.get_clinica(),
             status=Pacote.ATIVO,
+            servico=modelo.servico,
+            quantidade_sessoes=modelo.quantidade_sessoes,
+            valor_total=modelo.valor_total,
         )
 
         sessoes = [
@@ -84,25 +106,24 @@ class PacoteViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
             pacote=pacote
         ).only("id", "status")
 
-        HistoricoSessao.objects.bulk_create(
-            [
-                HistoricoSessao(
-                    sessao=sessao,
-                    estado_anterior="",
-                    estado_novo=SessaoPacote.DISPONIVEL,
-                    usuario_executor=self.request.user,
-                    motivo="CRIACAO_PACOTE",
-                    justificativa="Registro inicial da sessão do pacote.",
-                )
-                for sessao in sessoes_criadas
-            ]
-        )
+        HistoricoSessao.objects.bulk_create([
+            HistoricoSessao(
+                sessao=sessao,
+                estado_anterior="",
+                estado_novo=SessaoPacote.DISPONIVEL,
+                usuario_executor=self.request.user,
+                motivo="CRIACAO_PACOTE",
+                justificativa="Registro inicial da sessão do pacote.",
+            )
+            for sessao in sessoes_criadas
+        ])
 
         self._registrar_auditoria(
             pacote,
             Auditoria.CREATE,
             dados_novos={
                 **self._snapshot(pacote),
+                "modelo_id": str(modelo.pk),
                 "sessoes_criadas": len(sessoes),
             },
         )

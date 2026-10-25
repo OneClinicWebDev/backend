@@ -255,14 +255,69 @@ class Servico(models.Model):
         related_name="servicos",
     )
     nome = models.CharField(max_length=255)
+    preco = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+    )
     duracao_padrao_minutos = models.PositiveIntegerField()
+    categoria = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+    )
+    descricao = models.TextField(blank=True, default="")
     ativo = models.BooleanField(default=True)
-    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = "servicos"
+        db_table = "core_servico"
+        ordering = ["nome"]
+
+    def __str__(self):
+        return self.nome
+
+class ModeloPacote(models.Model):
+    clinica = models.ForeignKey(
+        Clinica,
+        on_delete=models.PROTECT,
+        related_name="modelos_pacote",
+    )
+    nome = models.CharField(max_length=255)
+    servico = models.ForeignKey(
+        Servico,
+        on_delete=models.PROTECT,
+        related_name="modelos_pacote",
+    )
+    quantidade_sessoes = models.PositiveIntegerField()
+    valor_total = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+    )
+    categoria = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+    )
+    descricao = models.TextField(blank=True, default="")
+    ativo = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "modelos_pacote"
+        ordering = ["nome"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(quantidade_sessoes__gte=1),
+                name="chk_modelo_pacote_sessoes_positivas",
+            ),
+            models.CheckConstraint(
+                condition=Q(valor_total__gte=0),
+                name="chk_modelo_pacote_valor_nao_negativo",
+            ),
+        ]
 
     def __str__(self):
         return self.nome
@@ -281,6 +336,15 @@ class Pacote(models.Model):
         on_delete=models.PROTECT,
         related_name="pacotes",
     )
+
+    modelo = models.ForeignKey(
+        ModeloPacote,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="aquisicoes",
+    )
+
     cliente = models.ForeignKey(
         Cliente,
         on_delete=models.PROTECT,

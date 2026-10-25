@@ -22,7 +22,7 @@ class UsuarioSerializer(serializers.ModelSerializer):
             "data_nascimento",
             "telefone",
         ]
-        read_only_fields = fields
+        read_only_fields = ["id"]
 
 class ClinicaSerializer(serializers.ModelSerializer):
     class Meta:
@@ -179,6 +179,7 @@ class ServicoSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+        read_only_fields = ["id", "clinica"]
 
 class AgendamentoSerializer(serializers.ModelSerializer):
     cliente_nome = serializers.CharField(

@@ -59,9 +59,6 @@ class ColaboradorSerializer(serializers.ModelSerializer):
     )
     cpf = serializers.CharField(write_only=True, required=False, max_length=14)
     nome_completo = serializers.CharField(write_only=True, required=False, max_length=255)
-    
-    # A SOLUÇÃO: write_only=True impede o DRF de quebrar a leitura, 
-    # e nós injetamos o valor no to_representation manualmente.
     especialidades = serializers.ListField(
         child=serializers.CharField(max_length=100),
         required=False,
@@ -111,8 +108,6 @@ class ColaboradorSerializer(serializers.ModelSerializer):
                     )
                     objs.append(esp)
             colaborador.especialidades.set(objs)
-
-        # Remove especialidades órfãs da clínica
         Especialidade.objects.filter(
             clinica=colaborador.clinica, 
             profissionais__isnull=True
@@ -133,7 +128,6 @@ class ColaboradorSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         representation = super().to_representation(instance)
-        # O DRF ignorou a serialização acima, então nós injetamos aqui com segurança
         representation["especialidades"] = [esp.nome for esp in instance.especialidades.all()]
         return representation
 class ClienteSerializer(serializers.ModelSerializer):
@@ -166,7 +160,6 @@ class ClienteSerializer(serializers.ModelSerializer):
             "usuario_nome",
             "usuario_cpf",
             "clinica",
-            "status_cadastro",
         ]
 
     def get_usuario_cpf(self, obj):

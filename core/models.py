@@ -257,6 +257,7 @@ class Servico(models.Model):
     nome = models.CharField(max_length=255)
     duracao_padrao_minutos = models.PositiveIntegerField()
     ativo = models.BooleanField(default=True)
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

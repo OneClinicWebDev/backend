@@ -333,6 +333,44 @@ class AgendamentoSerializer(serializers.ModelSerializer):
         source="servico.nome",
         read_only=True,
     )
+    cliente_telefone = serializers.CharField(
+        source="cliente.telefone",
+        read_only=True,
+    )
+    servico_preco = serializers.DecimalField(
+        source="servico.preco",
+        max_digits=10,
+        decimal_places=2,
+        read_only=True,
+    )
+    servico_duracao_minutos = serializers.IntegerField(
+        source="servico.duracao_padrao_minutos",
+        read_only=True,
+    )
+    pacote_nome = serializers.SerializerMethodField()
+    sessao_pacote_status = serializers.SerializerMethodField()
+
+    def get_pacote_nome(self, obj):
+        pacote = obj.pacote_origem
+
+        if pacote is None:
+            return None
+
+        if pacote.modelo_id:
+            return pacote.modelo.nome
+
+        return obj.servico.nome
+
+    def get_sessao_pacote_status(self, obj):
+        if obj.pacote_origem_id is None:
+            return None
+
+        sessao = getattr(obj, "sessao_pacote", None)
+
+        if sessao is None:
+            return None
+
+        return sessao.status
 
     class Meta:
         model = Agendamento

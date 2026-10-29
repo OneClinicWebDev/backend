@@ -1,3 +1,5 @@
+import uuid
+
 from django.db import transaction
 from django.db.models import Q
 
@@ -23,11 +25,57 @@ class PacoteViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
     permission_classes = [IsAdminOrSecretario]
 
     def get_queryset(self):
-        return (
+        queryset = (
             Pacote.objects.filter(clinica=self.get_clinica())
-            .select_related("cliente__usuario", "servico", "clinica")
+            .select_related(
+                "cliente__usuario",
+                "servico",
+                "clinica",
+                "modelo",
+            )
             .prefetch_related("sessoes")
         )
+
+        if self.action == "list":
+            queryset = self._aplicar_filtros_listagem(queryset)
+
+        return queryset
+
+    def _aplicar_filtros_listagem(self, queryset):
+        params = self.request.query_params
+
+        cliente = params.get("cliente")
+        if cliente:
+            try:
+                cliente = uuid.UUID(cliente)
+            except ValueError:
+                raise ValidationError({
+                    "cliente": "Informe um identificador (UUID) válido."
+                })
+
+            queryset = queryset.filter(cliente_id=cliente)
+
+        servico = params.get("servico")
+        if servico:
+            try:
+                servico = int(servico)
+            except ValueError:
+                raise ValidationError({
+                    "servico": "Informe um identificador numérico válido."
+                })
+
+            queryset = queryset.filter(servico_id=servico)
+
+        status_filtro = params.get("status")
+        if status_filtro:
+            if status_filtro not in dict(Pacote.STATUS_CHOICES):
+                raise ValidationError({
+                    "status": "Utilize ATIVO, CONCLUIDO ou CANCELADO."
+                })
+
+            queryset = queryset.filter(status=status_filtro)
+
+        return queryset.order_by("-created_at", "-pk")
 
     
     def _snapshot(self, pacote):

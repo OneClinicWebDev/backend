@@ -6,7 +6,7 @@ from rest_framework.test import APITestCase
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.db.models import ProtectedError
-
+from django.contrib.auth.models import AnonymousUser
 
 from core.models import (
     Usuario,
@@ -257,7 +257,8 @@ class AuditoriaImutabilidadeTestCase(TestCase):
 class AdminExclusaoProtegidaTestCase(TestCase):
     def test_modelos_core_bloqueiam_exclusao_no_admin(self):
         request = RequestFactory().get("/admin/")
-
+        request.user = AnonymousUser()
+        
         modelos_core = [
             model
             for model in admin.site._registry

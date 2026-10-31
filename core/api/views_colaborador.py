@@ -8,7 +8,11 @@ from rest_framework.response import Response
 
 from core.models import Colaborador, Role, Agendamento, Auditoria, Usuario
 from .base import ClinicaContextMixin
-from .permissions import IsAdmin, IsAdminOrSecretario
+from .permissions import (
+    IsAdmin,
+    IsAdminOrSecretario,
+    IsAdminOrSecretarioOuProfissionalAgenda,
+)
 from .serializers_core import ColaboradorSerializer
 
 
@@ -18,7 +22,7 @@ class ColaboradorViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.request.method in ['GET', 'HEAD', 'OPTIONS']:
-            return [IsAdminOrSecretario()]
+            return [IsAdminOrSecretarioOuProfissionalAgenda()]
         return [IsAdmin()]
 
     def get_queryset(self):

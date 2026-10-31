@@ -85,3 +85,24 @@ class IsProfissional(HasClinicaContext):
             super().has_permission(request, view)
             and request.colaborador.role.nome == Role.PROFISSIONAL
         )
+
+
+class IsAdminOrSecretarioOuProfissionalAgenda(HasClinicaContext):
+    def has_permission(self, request, view):
+        if not super().has_permission(request, view):
+            return False
+
+        colaborador = request.colaborador
+        papel = colaborador.role.nome
+
+        if papel in (Role.ADMIN, Role.SECRETARIO):
+            return True
+
+        if request.method not in permissions.SAFE_METHODS:
+            return False
+
+        return (
+            papel == Role.PROFISSIONAL
+            and colaborador.pode_editar_agenda
+            and request.clinica.profissionais_podem_editar_agenda
+        )

@@ -47,7 +47,8 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
                 "profissional__usuario",
                 "profissional__role",
                 "servico",
-                "pacote_origem",
+                "pacote_origem__modelo",
+                "sessao_pacote",
             )
         )
 
@@ -344,6 +345,47 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
             estado_novo=SessaoPacote.DISPONIVEL,
             motivo=motivo,
             justificativa=justificativa,
+        )
+
+    def _reservar_sessao_pacote(self, agendamento):
+        pacote = agendamento.pacote_origem
+
+        if pacote is None:
+            return
+
+        sessao = (
+            SessaoPacote.objects.select_for_update()
+            .filter(
+                pacote=pacote,
+                status=SessaoPacote.DISPONIVEL,
+                agendamento__isnull=True,
+            )
+            .order_by("pk")
+            .first()
+        )
+
+        if sessao is None:
+            raise ValidationError({
+                "pacote_origem": (
+                    "O pacote não possui sessões disponíveis para reservar."
+                )
+            })
+
+        estado_anterior = sessao.status
+        sessao.status = SessaoPacote.AGENDADA
+        sessao.agendamento = agendamento
+        sessao.save(update_fields=[
+            "status",
+            "agendamento",
+            "updated_at",
+        ])
+
+        self._registrar_historico_sessao(
+            sessao=sessao,
+            agendamento=agendamento,
+            estado_anterior=estado_anterior,
+            estado_novo=SessaoPacote.AGENDADA,
+            motivo="Reserva de sessão para o agendamento",
         )
 
     def _cancelar_por_sobreposicao(self, agendamento):
@@ -646,6 +688,8 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
                 "Atualize a agenda e tente novamente."
             )
 
+        self._reservar_sessao_pacote(agendamento)
+
         self._registrar_auditoria(
             agendamento,
             Auditoria.CREATE,
@@ -700,6 +744,7 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
             )
 
         anteriores = self._snapshot(agendamento)
+        pacote_anterior_id = agendamento.pacote_origem_id
 
         try:
             agendamento = serializer.save()
@@ -707,6 +752,13 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
             raise ConflictException(
                 "O horário acabou de ser ocupado por outro agendamento."
             )
+
+        if agendamento.pacote_origem_id != pacote_anterior_id:
+            self._liberar_sessao_pacote(
+                agendamento,
+                motivo="Troca do pacote do agendamento",
+            )
+            self._reservar_sessao_pacote(agendamento)
 
         self._registrar_auditoria(
             agendamento,
@@ -733,14 +785,17 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
         if agendamento.status not in (
             Agendamento.PENDENTE,
             Agendamento.CONFIRMADO,
+            Agendamento.CONCLUIDO,
         ):
             raise ValidationError(
-                "A falta só pode ser registrada em um agendamento pendente "
-                "ou confirmado."
+                "A falta só pode ser registrada em um agendamento "
+                "pendente, confirmado ou concluído."
             )
 
         if agendamento.resultado == Agendamento.FALTA:
             raise ValidationError("A falta já foi registrada.")
+
+        correcao_pos_conclusao = agendamento.status == Agendamento.CONCLUIDO
 
         sessao = (
             SessaoPacote.objects.select_for_update()
@@ -756,7 +811,22 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
                 "justificativa": "A justificativa deve ser um texto."
             })
 
-        if sessao and sessao.status == SessaoPacote.AGENDADA:
+        if correcao_pos_conclusao and not justificativa.strip():
+            raise ValidationError({
+                "justificativa": (
+                    "Informe a justificativa para corrigir um agendamento "
+                    "já concluído."
+                )
+            })
+
+        estados_com_decisao = (
+            (SessaoPacote.AGENDADA, SessaoPacote.UTILIZADA)
+            if correcao_pos_conclusao
+            else (SessaoPacote.AGENDADA,)
+        )
+        exige_decisao = bool(sessao and sessao.status in estados_com_decisao)
+
+        if exige_decisao:
             if decisao not in ("PRESERVAR", "PERDER"):
                 raise ValidationError({
                     "decisao_sessao": (
@@ -777,7 +847,7 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
 
         decisao_registrada = None
 
-        if sessao and sessao.status == SessaoPacote.AGENDADA:
+        if exige_decisao:
             estado_anterior = sessao.status
             estado_novo = (
                 SessaoPacote.DISPONIVEL
@@ -798,7 +868,11 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
                 agendamento=agendamento,
                 estado_anterior=estado_anterior,
                 estado_novo=estado_novo,
-                motivo="Registro manual de falta",
+                motivo=(
+                    "Correção de falta após conclusão"
+                    if correcao_pos_conclusao
+                    else "Registro manual de falta"
+                ),
                 justificativa=justificativa,
             )
 

@@ -453,6 +453,12 @@ class Agendamento(models.Model):
     )
     motivo_cancelamento = models.CharField(max_length=50, blank=True)
     observacoes = models.TextField(blank=True)
+    preco_acordado = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

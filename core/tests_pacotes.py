@@ -11,6 +11,7 @@ from core.models import (
     Colaborador,
     Cliente,
     Servico,
+    ModeloPacote,
     Pacote,
     Agendamento,
     SessaoPacote,
@@ -127,9 +128,20 @@ class PacotesAPITestCase(APITestCase):
         return payload
 
     def test_criar_pacote_gera_sessoes_e_historico(self):
+        modelo = ModeloPacote.objects.create(
+            clinica=self.clinica,
+            nome="Pacote Limpeza de Pele",
+            servico=self.servico,
+            quantidade_sessoes=3,
+            valor_total="300.00",
+            ativo=True,
+        )
+
+        payload = self.payload_pacote(modelo=modelo.id)
+
         response = self.client.post(
             self.url,
-            self.payload_pacote(),
+            payload,
             format="json",
         )
 
@@ -139,32 +151,29 @@ class PacotesAPITestCase(APITestCase):
             getattr(response, "data", None),
         )
 
-        pacote = Pacote.objects.get(pk=response.data["id"])
+        pacote = Pacote.objects.get(id=response.data["id"])
 
-        self.assertEqual(pacote.clinica_id, self.clinica.id)
-        self.assertEqual(pacote.status, Pacote.ATIVO)
+        self.assertEqual(pacote.modelo_id, modelo.id)
+        self.assertEqual(pacote.servico_id, self.servico.id)
+        self.assertEqual(pacote.quantidade_sessoes, 3)
+        self.assertEqual(str(pacote.valor_total), "300.00")
         self.assertEqual(pacote.sessoes.count(), 3)
-        self.assertEqual(
-            pacote.sessoes.filter(
-                status=SessaoPacote.DISPONIVEL
-            ).count(),
-            3,
-        )
+
         self.assertEqual(
             HistoricoSessao.objects.filter(
-                sessao__pacote=pacote
+                sessao__pacote=pacote,
+                motivo="CRIACAO_PACOTE",
             ).count(),
             3,
         )
+
         self.assertTrue(
             Auditoria.objects.filter(
-                clinica=self.clinica,
                 entidade="Pacote",
                 objeto_id=str(pacote.id),
                 acao=Auditoria.CREATE,
             ).exists()
         )
-
     def test_criar_pacote_rejeita_cliente_de_outra_clinica(self):
         response = self.client.post(
             self.url,

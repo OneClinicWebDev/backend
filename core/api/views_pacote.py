@@ -16,13 +16,21 @@ from core.models import (
     SessaoPacote,
 )
 from .base import ClinicaContextMixin
-from .permissions import IsAdminOrSecretario
+from .permissions import (
+    IsAdminOrSecretario,
+    IsAdminOrSecretarioOuProfissionalAgenda,
+)
 from .serializers_core import PacoteSerializer
 
 
 class PacoteViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
     serializer_class = PacoteSerializer
     permission_classes = [IsAdminOrSecretario]
+
+    def get_permissions(self):
+        if self.request.method in ("GET", "HEAD", "OPTIONS"):
+            return [IsAdminOrSecretarioOuProfissionalAgenda()]
+        return [IsAdminOrSecretario()]
 
     def get_queryset(self):
         queryset = (

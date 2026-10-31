@@ -16,6 +16,7 @@ from core.models import (
 )
 
 from core.validators import (
+    validar_cnpj,
     validar_telefone,
     validar_cep,
 )
@@ -42,6 +43,71 @@ class ClinicaSerializer(serializers.ModelSerializer):
         model = Clinica
         fields = "__all__"
         read_only_fields = fields
+
+
+class ClinicaAtualizacaoSerializer(serializers.ModelSerializer):
+    cnpj = serializers.CharField(max_length=18, trim_whitespace=True)
+    telefone = serializers.CharField(max_length=20, trim_whitespace=True)
+
+    class Meta:
+        model = Clinica
+        fields = [
+            "id",
+            "cnpj",
+            "razao_social",
+            "nome_fantasia",
+            "telefone",
+            "endereco",
+            "profissionais_podem_editar_agenda",
+        ]
+        read_only_fields = ["id", "profissionais_podem_editar_agenda"]
+
+    def validate_cnpj(self, value):
+        try:
+            cnpj = validar_cnpj(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.messages) from exc
+
+        existentes = Clinica.objects.filter(cnpj=cnpj)
+
+        if self.instance is not None:
+            existentes = existentes.exclude(pk=self.instance.pk)
+
+        if existentes.exists():
+            raise serializers.ValidationError(
+                "Já existe uma clínica cadastrada com este CNPJ."
+            )
+
+        return cnpj
+
+    def validate_telefone(self, value):
+        try:
+            return validar_telefone(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.messages) from exc
+
+    def validate_razao_social(self, value):
+        value = value.strip()
+
+        if len(value) < 3:
+            raise serializers.ValidationError(
+                "Informe uma razão social com pelo menos 3 caracteres."
+            )
+
+        return value
+
+    def validate_nome_fantasia(self, value):
+        value = value.strip()
+
+        if len(value) < 2:
+            raise serializers.ValidationError(
+                "Informe um nome fantasia válido."
+            )
+
+        return value
+
+    def validate_endereco(self, value):
+        return value.strip()
 
 
 class RoleSerializer(serializers.ModelSerializer):
@@ -347,6 +413,13 @@ class AgendamentoSerializer(serializers.ModelSerializer):
         source="servico.duracao_padrao_minutos",
         read_only=True,
     )
+    preco_acordado = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        min_value=0,
+        required=False,
+        allow_null=True,
+    )
     pacote_nome = serializers.SerializerMethodField()
     sessao_pacote_status = serializers.SerializerMethodField()
 
@@ -490,6 +563,7 @@ class PacoteSerializer(serializers.ModelSerializer):
         min_value=0,
     )
     saldo_sessoes = serializers.SerializerMethodField()
+    sessoes_disponiveis = serializers.SerializerMethodField()
     modelo_nome = serializers.CharField(
         source="modelo.nome",
         read_only=True,
@@ -519,6 +593,7 @@ class PacoteSerializer(serializers.ModelSerializer):
             "status",
             "observacoes",
             "saldo_sessoes",
+            "sessoes_disponiveis",
             "created_at",
             "updated_at",
         ]
@@ -527,12 +602,20 @@ class PacoteSerializer(serializers.ModelSerializer):
             "clinica",
             "status",
             "saldo_sessoes",
+            "sessoes_disponiveis",
             "created_at",
             "updated_at",
         ]
 
     def get_saldo_sessoes(self, obj):
         return obj.saldo_sessoes
+
+    def get_sessoes_disponiveis(self, obj):
+        return sum(
+            1
+            for sessao in obj.sessoes.all()
+            if sessao.status == SessaoPacote.DISPONIVEL
+        )
 
     def validate_quantidade_sessoes(self, value):
         if not 1 <= value <= MAX_INTEGER:

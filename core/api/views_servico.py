@@ -5,13 +5,21 @@ from rest_framework.response import Response
 
 from core.models import Servico, Auditoria
 from .base import ClinicaContextMixin
-from .permissions import IsAdminOrSecretario
+from .permissions import (
+    IsAdminOrSecretario,
+    IsAdminOrSecretarioOuProfissionalAgenda,
+)
 from .serializers_core import ServicoSerializer
 
 
 class ServicoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
     serializer_class = ServicoSerializer
     permission_classes = [IsAdminOrSecretario]
+
+    def get_permissions(self):
+        if self.request.method in ("GET", "HEAD", "OPTIONS"):
+            return [IsAdminOrSecretarioOuProfissionalAgenda()]
+        return [IsAdminOrSecretario()]
 
     def get_queryset(self):
         return Servico.objects.filter(

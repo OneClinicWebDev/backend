@@ -42,8 +42,9 @@ class ClinicaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Clinica
         fields = "__all__"
-        read_only_fields = fields
-
+        read_only_fields = tuple(
+            field.name for field in Clinica._meta.fields
+        )
 
 class ClinicaAtualizacaoSerializer(serializers.ModelSerializer):
     cnpj = serializers.CharField(max_length=18, trim_whitespace=True)

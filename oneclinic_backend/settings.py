@@ -1,3 +1,4 @@
+
 from pathlib import Path
 from corsheaders.defaults import default_headers
 from dotenv import load_dotenv
@@ -14,9 +15,16 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 if not SECRET_KEY:
     raise ValueError("A variável SECRET_KEY não foi configurada.")
 
-DEBUG = os.getenv('DEBUG', 'False') == 'True'
+DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '*').split(',')
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv(
+        'ALLOWED_HOSTS',
+        'localhost,127.0.0.1'
+    ).split(',')
+    if host.strip()
+]
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
@@ -73,6 +81,7 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = 'oneclinic_backend.urls'
+
 WSGI_APPLICATION = 'oneclinic_backend.wsgi.application'
 
 TEMPLATES = [
@@ -94,10 +103,19 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 if DATABASE_URL:
     db_from_env = dj_database_url.parse(
         DATABASE_URL,
-        conn_max_age=600,
+        conn_max_age=0,
+        ssl_require=True,
     )
-    db_from_env['TEST'] = {'NAME': 'test_oneclinic_novo'}
-    DATABASES = {'default': db_from_env}
+
+    db_from_env.setdefault('OPTIONS', {})['sslmode'] = 'require'
+    db_from_env['DISABLE_SERVER_SIDE_CURSORS'] = True
+    db_from_env['TEST'] = {
+        'NAME': 'test_oneclinic_novo',
+    }
+
+    DATABASES = {
+        'default': db_from_env
+    }
 else:
     DATABASES = {
         'default': {
@@ -107,7 +125,9 @@ else:
             'PASSWORD': os.getenv('DB_PASSWORD'),
             'HOST': os.getenv('DB_HOST'),
             'PORT': os.getenv('DB_PORT'),
-            'OPTIONS': {'sslmode': 'require'},
+            'OPTIONS': {
+                'sslmode': 'require',
+            },
             'TEST': {
                 'NAME': 'test_oneclinic_novo',
             },
@@ -132,7 +152,9 @@ AUTH_PASSWORD_VALIDATORS = [
     },
     {
         'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-        'OPTIONS': {'min_length': 8},
+        'OPTIONS': {
+            'min_length': 8,
+        },
     },
     {
         'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
@@ -143,19 +165,23 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 LANGUAGE_CODE = 'pt-br'
+
 TIME_ZONE = 'America/Sao_Paulo'
+
 USE_I18N = True
+
 USE_TZ = True
 
 STATIC_URL = '/static/'
+
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 STORAGES = {
-    "default": {
-        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
     },
-    "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
     },
 }
 
@@ -176,11 +202,18 @@ CORS_ALLOWED_ORIGINS = [
 ]
 
 CORS_ALLOW_ALL_ORIGINS = False
+
 CORS_ALLOW_CREDENTIALS = True
+
 CORS_ALLOW_HEADERS = list(default_headers) + ['x-clinica-id']
+
+CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
 
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     SECURE_SSL_REDIRECT = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = False
+    SECURE_HSTS_PRELOAD = False

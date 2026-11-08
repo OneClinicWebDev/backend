@@ -34,6 +34,8 @@ class UsuarioSerializer(serializers.ModelSerializer):
             "nome_completo",
             "data_nascimento",
             "telefone",
+            "created_at",
+            "updated_at",
         ]
         read_only_fields = fields
 
@@ -150,6 +152,8 @@ class ColaboradorSerializer(serializers.ModelSerializer):
             "cpf",
             "nome_completo",
             "especialidades",
+            "created_at",
+            "updated_at",
         ]
         read_only_fields = [
             "id",
@@ -157,6 +161,8 @@ class ColaboradorSerializer(serializers.ModelSerializer):
             "usuario_nome",
             "clinica",
             "role_nome",
+            "created_at",
+            "updated_at",
         ]
 
     def _processar_especialidades(self, colaborador, nomes_especialidades):
@@ -221,7 +227,9 @@ class ClienteSerializer(serializers.ModelSerializer):
             "numero_endereco",
             "status_cadastro",
             "cpf",
-            "nome_completo"
+            "nome_completo",
+            "created_at",
+            "updated_at",
         ]
         read_only_fields = [
             "id",
@@ -229,6 +237,8 @@ class ClienteSerializer(serializers.ModelSerializer):
             "usuario_nome",
             "usuario_cpf",
             "clinica",
+            "created_at",
+            "updated_at",
         ]
 
     def get_usuario_cpf(self, obj):

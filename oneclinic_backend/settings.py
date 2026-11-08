@@ -1,4 +1,3 @@
-
 from pathlib import Path
 from corsheaders.defaults import default_headers
 from dotenv import load_dotenv
@@ -103,7 +102,8 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 if DATABASE_URL:
     db_from_env = dj_database_url.parse(
         DATABASE_URL,
-        conn_max_age=0,
+        conn_max_age=int(os.getenv('DB_CONN_MAX_AGE', '600')),
+        conn_health_checks=True,
         ssl_require=True,
     )
 

@@ -144,6 +144,8 @@ class Role(models.Model):
         choices=ROLE_CHOICES,
         unique=True,
     )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "roles"
@@ -163,6 +165,8 @@ class Especialidade(models.Model):
         related_name="especialidades"
     )
     nome = models.CharField(max_length=100)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "especialidades"
@@ -583,6 +587,10 @@ class HistoricoSessao(models.Model):
     class Meta:
         db_table = "historico_sessoes"
 
+    @property
+    def created_at(self):
+        return self.data_alteracao
+
     def __str__(self):
         return f"Histórico da sessão {self.sessao_id}"
 
@@ -654,6 +662,10 @@ class Auditoria(models.Model):
     class Meta:
         db_table = "auditoria"
         ordering = ["-data_hora"]
+
+    @property
+    def created_at(self):
+        return self.data_hora
 
     def __str__(self):
         return f"{self.entidade} - {self.acao} - {self.objeto_id}"

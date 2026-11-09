@@ -1,9 +1,10 @@
+import logging
 from datetime import date
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from rest_framework import status, viewsets
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import APIException, PermissionDenied, ValidationError
 from rest_framework.response import Response
 
 from core.models import Colaborador, Role, Agendamento, Auditoria, Usuario
@@ -14,6 +15,8 @@ from .permissions import (
     IsAdminOrSecretarioOuProfissionalAgenda,
 )
 from .serializers_core import ColaboradorSerializer
+
+logger = logging.getLogger(__name__)
 
 
 class ColaboradorViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
@@ -166,11 +169,19 @@ class ColaboradorViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
             with transaction.atomic():
                 colaborador = serializer.save(clinica=clinica, usuario=usuario)
         except IntegrityError as exc:
+            logger.exception("Falha de integridade ao criar colaborador")
             raise ValidationError({
                 "detail": (
                     "Não foi possível salvar o colaborador: "
                     f"{str(exc).splitlines()[0][:240]}"
                 )
+            })
+        except APIException:
+            raise
+        except Exception as exc:
+            logger.exception("Erro inesperado ao criar colaborador")
+            raise ValidationError({
+                "detail": f"Erro ao criar colaborador ({type(exc).__name__}): {str(exc)[:240]}"
             })
 
         self._registrar_auditoria(
@@ -217,20 +228,27 @@ class ColaboradorViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
         try:
             with transaction.atomic():
                 colaborador = serializer.save(clinica=self.get_clinica())
+                self._registrar_auditoria(
+                    colaborador,
+                    Auditoria.UPDATE,
+                    dados_anteriores=anteriores,
+                    dados_novos=self._snapshot(colaborador),
+                )
         except IntegrityError as exc:
+            logger.exception("Falha de integridade ao atualizar colaborador")
             raise ValidationError({
                 "detail": (
                     "Não foi possível atualizar o colaborador: "
                     f"{str(exc).splitlines()[0][:240]}"
                 )
             })
-
-        self._registrar_auditoria(
-            colaborador,
-            Auditoria.UPDATE,
-            dados_anteriores=anteriores,
-            dados_novos=self._snapshot(colaborador),
-        )
+        except APIException:
+            raise
+        except Exception as exc:
+            logger.exception("Erro inesperado ao atualizar colaborador")
+            raise ValidationError({
+                "detail": f"Erro ao atualizar colaborador ({type(exc).__name__}): {str(exc)[:240]}"
+            })
 
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):

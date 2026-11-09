@@ -31,6 +31,7 @@ class ColaboradorViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
             .select_related("usuario", "clinica", "role")
             .prefetch_related("especialidades")
         )
+
     def _snapshot(self, colaborador):
         return {
             "usuario_id": str(colaborador.usuario_id),
@@ -130,25 +131,45 @@ class ColaboradorViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
         if not cpf:
             raise ValidationError({"cpf": "O CPF é obrigatório para cadastrar o colaborador."})
 
-        try:
-            usuario = Usuario.objects.get(cpf=cpf)
-        except Usuario.DoesNotExist:
-            from datetime import date
+        usuario = Usuario.objects.filter(cpf=cpf).first()
+
+        if usuario is None:
             usuario = Usuario.objects.create_user(
-                cpf=cpf, 
-                nome_completo=nome, 
+                cpf=cpf,
+                nome_completo=nome,
                 data_nascimento=date(1900, 1, 1),
-                password=None
+                password=None,
             )
+        else:
+            vinculo = Colaborador.objects.filter(
+                usuario=usuario,
+                clinica=clinica,
+            ).first()
+
+            if vinculo is not None:
+                if vinculo.ativo:
+                    raise ValidationError({
+                        "usuario": (
+                            "Este usuário já possui vínculo de colaborador "
+                            "ativo nesta clínica."
+                        )
+                    })
+
+                raise ValidationError({
+                    "usuario": (
+                        "Este usuário possui um vínculo inativo nesta "
+                        "clínica. Reative o colaborador existente."
+                    )
+                })
 
         try:
             with transaction.atomic():
                 colaborador = serializer.save(clinica=clinica, usuario=usuario)
-        except IntegrityError:
+        except IntegrityError as exc:
             raise ValidationError({
-                "usuario": (
-                    "Este usuário já possui vínculo de colaborador "
-                    "nesta clínica."
+                "detail": (
+                    "Não foi possível salvar o colaborador: "
+                    f"{str(exc).splitlines()[0][:240]}"
                 )
             })
 
@@ -193,7 +214,16 @@ class ColaboradorViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
 
         anteriores = self._snapshot(colaborador)
 
-        colaborador = serializer.save(clinica=self.get_clinica())
+        try:
+            with transaction.atomic():
+                colaborador = serializer.save(clinica=self.get_clinica())
+        except IntegrityError as exc:
+            raise ValidationError({
+                "detail": (
+                    "Não foi possível atualizar o colaborador: "
+                    f"{str(exc).splitlines()[0][:240]}"
+                )
+            })
 
         self._registrar_auditoria(
             colaborador,

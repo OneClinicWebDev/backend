@@ -500,6 +500,8 @@ class AgendamentoSerializer(serializers.ModelSerializer):
                 "cliente": "O cliente não pertence à clínica ativa."
             })
 
+        instancia = self.instance
+
         if profissional is not None:
             if profissional.clinica_id != clinica.pk:
                 raise serializers.ValidationError({
@@ -508,19 +510,30 @@ class AgendamentoSerializer(serializers.ModelSerializer):
                     )
                 })
 
-            if not profissional.ativo:
-                raise serializers.ValidationError({
-                    "profissional": (
-                        "Não é possível agendar com um profissional inativo."
-                    )
-                })
+            mudou_profissional = (
+                instancia is None
+                or profissional.pk != instancia.profissional_id
+            )
 
-            if profissional.role.nome not in (Role.PROFISSIONAL, Role.ADMIN):
-                 raise serializers.ValidationError({
-                "profissional": (
-                "O colaborador selecionado não pode realizar atendimentos."
-             )
-         })
+            if mudou_profissional:
+                if not profissional.ativo:
+                    raise serializers.ValidationError({
+                        "profissional": (
+                            "Não é possível agendar com um profissional "
+                            "inativo."
+                        )
+                    })
+
+                if profissional.role.nome not in (
+                    Role.PROFISSIONAL,
+                    Role.ADMIN,
+                ):
+                    raise serializers.ValidationError({
+                        "profissional": (
+                            "O colaborador selecionado não pode realizar "
+                            "atendimentos."
+                        )
+                    })
 
         if servico is not None:
             if servico.clinica_id != clinica.pk:
@@ -528,7 +541,11 @@ class AgendamentoSerializer(serializers.ModelSerializer):
                     "servico": "O serviço não pertence à clínica ativa."
                 })
 
-            if not servico.ativo:
+            mudou_servico = (
+                instancia is None or servico.pk != instancia.servico_id
+            )
+
+            if mudou_servico and not servico.ativo:
                 raise serializers.ValidationError({
                     "servico": "Não é possível agendar um serviço inativo."
                 })
@@ -548,9 +565,14 @@ class AgendamentoSerializer(serializers.ModelSerializer):
                     )
                 })
 
-            if pacote.status != Pacote.ATIVO:
+            mudou_pacote = (
+                instancia is None
+                or pacote.pk != instancia.pacote_origem_id
+            )
+
+            if mudou_pacote and pacote.status != Pacote.ATIVO:
                 raise serializers.ValidationError({
-                "pacote_origem": "O pacote não está ativo."
+                    "pacote_origem": "O pacote não está ativo."
                 })
 
             if servico is not None and pacote.servico_id != servico.pk:

@@ -269,7 +269,83 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
             ),
             "inicio": agendamento.data_hora_inicio.isoformat(),
             "fim": agendamento.data_hora_fim.isoformat(),
+            "observacoes": agendamento.observacoes,
+            "preco_acordado": (
+                str(agendamento.preco_acordado)
+                if agendamento.preco_acordado is not None
+                else None
+            ),
         }
+
+    def _atualizar_encerrado(self, serializer, agendamento):
+        colaborador = self._colaborador_logado()
+
+        if colaborador.role.nome != Role.ADMIN:
+            raise ValidationError(
+                "Agendamentos cancelados ou concluídos não podem ser editados."
+            )
+
+        dados = serializer.validated_data
+        travados = []
+
+        comparacoes = (
+            ("cliente", agendamento.cliente_id, "cliente"),
+            ("profissional", agendamento.profissional_id, "profissional"),
+            ("servico", agendamento.servico_id, "procedimento"),
+            ("pacote_origem", agendamento.pacote_origem_id, "pacote"),
+        )
+
+        for campo, atual, rotulo in comparacoes:
+            if campo in dados:
+                novo = dados[campo].pk if dados[campo] is not None else None
+
+                if novo != atual:
+                    travados.append(rotulo)
+
+        if (
+            "data_hora_inicio" in dados
+            and dados["data_hora_inicio"] != agendamento.data_hora_inicio
+        ) or (
+            "data_hora_fim" in dados
+            and dados["data_hora_fim"] != agendamento.data_hora_fim
+        ):
+            travados.append("horário")
+
+        if (
+            "preco_acordado" in dados
+            and dados["preco_acordado"] != agendamento.preco_acordado
+        ):
+            travados.append("valor")
+
+        if travados:
+            raise ValidationError({
+                "detail": (
+                    "Este agendamento já foi encerrado. Para preservar o "
+                    "histórico e o saldo de sessões, apenas as observações "
+                    "podem ser alteradas. Campos bloqueados: "
+                    + ", ".join(travados)
+                    + "."
+                )
+            })
+
+        anteriores = self._snapshot(agendamento)
+
+        agendamento = serializer.save(
+            cliente=agendamento.cliente,
+            profissional=agendamento.profissional,
+            servico=agendamento.servico,
+            pacote_origem=agendamento.pacote_origem,
+            data_hora_inicio=agendamento.data_hora_inicio,
+            data_hora_fim=agendamento.data_hora_fim,
+            preco_acordado=agendamento.preco_acordado,
+        )
+
+        self._registrar_auditoria(
+            agendamento,
+            Auditoria.UPDATE,
+            dados_anteriores=anteriores,
+            dados_novos=self._snapshot(agendamento),
+        )
 
     def _registrar_auditoria(
         self,
@@ -711,9 +787,8 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
             Agendamento.CANCELADO,
             Agendamento.CONCLUIDO,
         ):
-            raise ValidationError(
-                "Agendamentos cancelados ou concluídos não podem ser editados."
-            )
+            self._atualizar_encerrado(serializer, agendamento)
+            return
 
         profissional = serializer.validated_data.get(
             "profissional",
@@ -732,7 +807,9 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
             agendamento.data_hora_fim,
         )
 
-        self._validar_cliente_ativo(cliente, clinica)
+        if cliente.pk != agendamento.cliente_id:
+            self._validar_cliente_ativo(cliente, clinica)
+
         self._validar_autonomia_agenda(clinica, profissional.id)
 
         conflitos = self._buscar_conflitos(

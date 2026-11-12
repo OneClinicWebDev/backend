@@ -204,6 +204,17 @@ class PacoteViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
                 )
             })
 
+        for campo in ("cliente", "servico", "modelo", "valor_total", "status"):
+            if campo in dados:
+                atual = getattr(pacote, campo)
+                if dados[campo] != atual:
+                    raise ValidationError({
+                        campo: (
+                            "Este campo não pode ser alterado após a "
+                            "venda do pacote para preservar o histórico."
+                        )
+                    })
+
         pacote = serializer.save(clinica=self.get_clinica())
 
         self._registrar_auditoria(
@@ -212,6 +223,62 @@ class PacoteViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
             dados_anteriores=anteriores,
             dados_novos=self._snapshot(pacote),
         )
+
+    @action(detail=True, methods=["get"])
+    def sessoes(self, request, pk=None):
+        pacote = self.get_object()
+
+        sessoes = (
+            SessaoPacote.objects.filter(pacote=pacote)
+            .select_related("agendamento", "agendamento__profissional__usuario")
+            .prefetch_related("historico__usuario_executor")
+            .order_by("pk")
+        )
+
+        resultado = []
+
+        for indice, sessao in enumerate(sessoes, start=1):
+            agendamento = sessao.agendamento
+            resultado.append({
+                "id": sessao.pk,
+                "numero": indice,
+                "status": sessao.status,
+                "agendamento_id": agendamento.pk if agendamento else None,
+                "agendamento_inicio": (
+                    agendamento.data_hora_inicio if agendamento else None
+                ),
+                "profissional_nome": (
+                    agendamento.profissional.usuario.nome_completo
+                    if agendamento
+                    else ""
+                ),
+                "created_at": sessao.created_at,
+                "updated_at": sessao.updated_at,
+                "historico": [
+                    {
+                        "id": item.pk,
+                        "estado_anterior": item.estado_anterior,
+                        "estado_novo": item.estado_novo,
+                        "motivo": item.motivo,
+                        "justificativa": item.justificativa,
+                        "responsavel": (
+                            item.usuario_executor.nome_completo
+                            if item.usuario_executor
+                            else "Sistema"
+                        ),
+                        "agendamento_id": item.agendamento_relacionado_id,
+                        "data_alteracao": item.data_alteracao,
+                    }
+                    for item in sessao.historico.all().order_by("pk")
+                ],
+            })
+
+        return Response({
+            "pacote_id": pacote.pk,
+            "status": pacote.status,
+            "quantidade_sessoes": pacote.quantidade_sessoes,
+            "sessoes": resultado,
+        })
 
     @action(detail=True, methods=["post"])
     @transaction.atomic

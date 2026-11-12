@@ -4,7 +4,7 @@ from django.contrib.auth.base_user import BaseUserManager
 from django.contrib.auth.models import AbstractBaseUser
 from django.contrib.postgres.constraints import ExclusionConstraint
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import models, transaction
 from django.db.models import F, Q
 from .validators import validar_cpf, validar_cnpj
 
@@ -547,11 +547,39 @@ class SessaoPacote(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    TRANSICOES_PERMITIDAS = {
+        DISPONIVEL: {AGENDADA, CANCELADA},
+        AGENDADA: {DISPONIVEL, UTILIZADA, PERDIDA, CANCELADA},
+        UTILIZADA: {DISPONIVEL, PERDIDA},
+        PERDIDA: set(),
+        CANCELADA: set(),
+    }
+
     class Meta:
         db_table = "sessoes_pacote"
 
     def __str__(self):
         return f"Sessão {self.pk} - {self.status}"
+
+    def save(self, *args, **kwargs):
+        if not self.pk:
+            super().save(*args, **kwargs)
+            return
+        with transaction.atomic():
+            anterior = (
+                type(self)
+                .objects.select_for_update()
+                .filter(pk=self.pk)
+                .values_list("status", flat=True)
+                .first()
+            )
+            if anterior is not None and anterior != self.status:
+                permitidos = self.TRANSICOES_PERMITIDAS.get(anterior, set())
+                if self.status not in permitidos:
+                    raise ValidationError(
+                        f"Transição de sessão não permitida: {anterior} para {self.status}."
+                    )
+            super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
         raise ValidationError(
@@ -604,6 +632,171 @@ class HistoricoSessao(models.Model):
     def delete(self, *args, **kwargs):
         raise ValidationError(
             "Registros do histórico de sessões não podem ser excluídos."
+        )
+
+class ProcedimentoRealizado(models.Model):
+    REALIZADO = "REALIZADO"
+    ESTORNADO = "ESTORNADO"
+    STATUS_CHOICES = [
+        (REALIZADO, "Realizado"),
+        (ESTORNADO, "Estornado"),
+    ]
+    ORIGEM_AUTOMATICA = "AUTOMATICA"
+    ORIGEM_MANUAL = "MANUAL"
+    ORIGEM_MIGRACAO = "MIGRACAO"
+    ORIGEM_CHOICES = [
+        (ORIGEM_AUTOMATICA, "Conclusão automática"),
+        (ORIGEM_MANUAL, "Conclusão manual"),
+        (ORIGEM_MIGRACAO, "Migração de histórico"),
+    ]
+    DESTINO_DEVOLVIDA = "DEVOLVIDA"
+    DESTINO_PERDIDA = "PERDIDA"
+    DESTINO_NAO_APLICAVEL = "NAO_APLICAVEL"
+    DESTINO_CHOICES = [
+        (DESTINO_DEVOLVIDA, "Sessão devolvida"),
+        (DESTINO_PERDIDA, "Sessão perdida"),
+        (DESTINO_NAO_APLICAVEL, "Sem sessão de pacote"),
+    ]
+    CAMPOS_ESTORNO = {
+        "destino_sessao",
+        "status",
+        "estornado_em",
+        "estornado_por",
+        "motivo_estorno",
+        "updated_at",
+    }
+    objects = ExclusaoFisicaBloqueadaQuerySet.as_manager()
+    clinica = models.ForeignKey(
+        Clinica,
+        on_delete=models.PROTECT,
+        related_name="procedimentos_realizados",
+    )
+    cliente = models.ForeignKey(
+        Cliente,
+        on_delete=models.PROTECT,
+        related_name="procedimentos_realizados",
+    )
+    profissional = models.ForeignKey(
+        Colaborador,
+        on_delete=models.PROTECT,
+        related_name="procedimentos_realizados",
+    )
+    servico = models.ForeignKey(
+        Servico,
+        on_delete=models.PROTECT,
+        related_name="procedimentos_realizados",
+    )
+    agendamento = models.OneToOneField(
+        Agendamento,
+        on_delete=models.PROTECT,
+        related_name="procedimento_realizado",
+    )
+    pacote = models.ForeignKey(
+        Pacote,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="procedimentos_realizados",
+    )
+    sessao = models.ForeignKey(
+        SessaoPacote,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="procedimentos_realizados",
+    )
+    cliente_nome = models.CharField(max_length=255)
+    profissional_nome = models.CharField(max_length=255)
+    servico_nome = models.CharField(max_length=255)
+    pacote_nome = models.CharField(max_length=255, blank=True, default="")
+    valor = models.DecimalField(max_digits=10, decimal_places=2)
+    duracao_minutos = models.PositiveIntegerField()
+    realizado_em = models.DateTimeField()
+    origem = models.CharField(max_length=20, choices=ORIGEM_CHOICES)
+    registrado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="procedimentos_registrados",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=REALIZADO,
+    )
+    estornado_em = models.DateTimeField(null=True, blank=True)
+    estornado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="procedimentos_estornados",
+    )
+    motivo_estorno = models.TextField(blank=True, default="")
+    destino_sessao = models.CharField(
+        max_length=20,
+        choices=DESTINO_CHOICES,
+        blank=True,
+        default="",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "procedimentos_realizados"
+        ordering = ["-realizado_em", "-pk"]
+        indexes = [
+            models.Index(
+                fields=["cliente", "realizado_em"],
+                name="idx_proc_cliente_data",
+            ),
+            models.Index(
+                fields=["clinica", "realizado_em"],
+                name="idx_proc_clinica_data",
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(valor__gte=0),
+                name="chk_proc_realizado_valor_nao_negativo",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Procedimento realizado {self.pk}"
+
+    def save(self, *args, **kwargs):
+        if not self.pk:
+            super().save(*args, **kwargs)
+            return
+        with transaction.atomic():
+            anterior = (
+                type(self)
+                .objects.select_for_update()
+                .filter(pk=self.pk)
+                .first()
+            )
+            if anterior is not None:
+                if anterior.status == self.ESTORNADO:
+                    raise ValidationError(
+                        "Procedimentos estornados são imutáveis."
+                    )
+                for campo in self._meta.concrete_fields:
+                    if campo.name in self.CAMPOS_ESTORNO:
+                        continue
+                    if getattr(anterior, campo.attname) != getattr(
+                        self, campo.attname
+                    ):
+                        raise ValidationError(
+                            "Registros de procedimentos realizados são "
+                            "imutáveis, exceto pelo estorno."
+                        )
+            super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError(
+            "Procedimentos realizados não podem ser excluídos."
         )
 
 class AuditoriaQuerySet(models.QuerySet):

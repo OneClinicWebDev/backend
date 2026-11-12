@@ -24,6 +24,12 @@ from core.models import (
     HistoricoSessao,
     Auditoria,
 )
+from core.servicos_atendimento import (
+    RegraAtendimentoError,
+    concluir_atendimento,
+    estornar_procedimento,
+    sincronizar_status_pacote,
+)
 from .base import ClinicaContextMixin
 from .permissions import HasClinicaContext
 from .serializers_core import AgendamentoSerializer
@@ -743,6 +749,28 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
                 "Existe um agendamento CONFIRMADO no mesmo intervalo."
             )
 
+        novo_pacote = serializer.validated_data.get(
+            "pacote_origem",
+            agendamento.pacote_origem,
+        )
+        novo_servico = serializer.validated_data.get(
+            "servico",
+            agendamento.servico,
+        )
+
+        if novo_pacote is not None:
+            if (
+                novo_pacote.clinica_id != clinica.pk
+                or novo_pacote.cliente_id != cliente.pk
+                or novo_pacote.servico_id != novo_servico.pk
+            ):
+                raise ValidationError({
+                    "pacote_origem": (
+                        "O pacote deve pertencer ao mesmo cliente e ao "
+                        "mesmo procedimento do agendamento."
+                    )
+                })
+
         anteriores = self._snapshot(agendamento)
         pacote_anterior_id = agendamento.pacote_origem_id
 
@@ -878,6 +906,19 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
 
             decisao_registrada = decisao
 
+        procedimento_estornado = None
+
+        if correcao_pos_conclusao:
+            procedimento_estornado = estornar_procedimento(
+                agendamento,
+                request.user,
+                justificativa.strip(),
+                decisao_registrada,
+            )
+
+        if sessao is not None:
+            sincronizar_status_pacote(sessao.pacote)
+
         self._registrar_auditoria(
             agendamento,
             Auditoria.UPDATE,
@@ -886,6 +927,11 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
                 **self._snapshot(agendamento),
                 "decisao_sessao": decisao_registrada,
                 "justificativa": justificativa,
+                "procedimento_estornado_id": (
+                    procedimento_estornado.pk
+                    if procedimento_estornado
+                    else None
+                ),
             },
         )
 
@@ -894,6 +940,33 @@ class AgendamentoViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
             "agendamento_id": str(agendamento.id),
             "resultado": agendamento.resultado,
             "decisao_sessao": decisao_registrada,
+        })
+
+    @action(detail=True, methods=["post"])
+    def concluir(self, request, pk=None):
+        agendamento = self.get_object()
+        colaborador = self._colaborador_logado()
+
+        if colaborador.role.nome not in (Role.ADMIN, Role.SECRETARIO):
+            raise PermissionDenied(
+                "Somente ADMIN ou SECRETARIO pode concluir atendimentos."
+            )
+
+        try:
+            procedimento, consumidas = concluir_atendimento(
+                agendamento.pk,
+                usuario=request.user,
+                origem="MANUAL",
+                exigir_inicio=True,
+            )
+        except RegraAtendimentoError as exc:
+            raise ValidationError(str(exc))
+
+        return Response({
+            "detail": "Atendimento concluído.",
+            "agendamento_id": str(agendamento.pk),
+            "procedimento_realizado_id": procedimento.pk,
+            "sessoes_consumidas": consumidas,
         })
 
     @action(detail=True, methods=["post"])

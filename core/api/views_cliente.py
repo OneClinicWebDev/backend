@@ -1,10 +1,21 @@
 from django.db import IntegrityError, transaction
+from django.db.models import Count, Q
 
 from rest_framework import status, viewsets
+from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
-from core.models import Cliente, Auditoria, Usuario
+from core.models import (
+    Agendamento,
+    Auditoria,
+    Cliente,
+    HistoricoSessao,
+    Pacote,
+    ProcedimentoRealizado,
+    SessaoPacote,
+    Usuario,
+)
 from .base import ClinicaContextMixin
 from .permissions import (
     IsAdminOrSecretario,
@@ -60,6 +71,154 @@ class ClienteViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
             ip=ip or None,
             user_agent=self.request.META.get("HTTP_USER_AGENT", ""),
         )
+
+    @action(detail=True, methods=["get"])
+    def historico(self, request, pk=None):
+        cliente = self.get_object()
+        clinica = self.get_clinica()
+
+        try:
+            limite = max(1, min(int(request.query_params.get("limite", 200)), 500))
+        except (TypeError, ValueError):
+            limite = 200
+
+        procedimentos = (
+            ProcedimentoRealizado.objects.filter(clinica=clinica, cliente=cliente)
+            .order_by("-realizado_em", "-pk")[:limite]
+        )
+
+        agendamentos = (
+            Agendamento.objects.filter(clinica=clinica, cliente=cliente)
+            .select_related("servico", "profissional__usuario", "pacote_origem__modelo")
+            .order_by("-data_hora_inicio", "-pk")[:limite]
+        )
+
+        pacotes = (
+            Pacote.objects.filter(clinica=clinica, cliente=cliente)
+            .select_related("servico", "modelo")
+            .annotate(
+                total_disponiveis=Count("sessoes", filter=Q(sessoes__status=SessaoPacote.DISPONIVEL)),
+                total_agendadas=Count("sessoes", filter=Q(sessoes__status=SessaoPacote.AGENDADA)),
+                total_utilizadas=Count("sessoes", filter=Q(sessoes__status=SessaoPacote.UTILIZADA)),
+                total_perdidas=Count("sessoes", filter=Q(sessoes__status=SessaoPacote.PERDIDA)),
+                total_canceladas=Count("sessoes", filter=Q(sessoes__status=SessaoPacote.CANCELADA)),
+            )
+            .order_by("-created_at", "-pk")
+        )
+
+        movimentos = (
+            HistoricoSessao.objects.filter(sessao__pacote__clinica=clinica, sessao__pacote__cliente=cliente)
+            .select_related("usuario_executor", "sessao__pacote__servico", "sessao__pacote__modelo")
+            .order_by("-data_alteracao", "-pk")[:limite]
+        )
+
+        lista_agendamentos = []
+        cancelamentos = []
+        faltas = []
+
+        for item in agendamentos:
+            dado = {
+                "id": item.pk,
+                "servico_nome": item.servico.nome,
+                "profissional_nome": item.profissional.usuario.nome_completo,
+                "pacote_id": item.pacote_origem_id,
+                "pacote_nome": (
+                    (item.pacote_origem.modelo.nome if item.pacote_origem.modelo_id else f"Pacote {item.pacote_origem_id}")
+                    if item.pacote_origem_id
+                    else ""
+                ),
+                "data_hora_inicio": item.data_hora_inicio,
+                "data_hora_fim": item.data_hora_fim,
+                "status": item.status,
+                "resultado": item.resultado,
+                "motivo_cancelamento": item.motivo_cancelamento,
+            }
+            lista_agendamentos.append(dado)
+            if item.status == Agendamento.CANCELADO:
+                cancelamentos.append(dado)
+            if item.resultado == Agendamento.FALTA:
+                faltas.append(dado)
+
+        lista_pacotes = [
+            {
+                "id": p.pk,
+                "nome": p.modelo.nome if p.modelo_id else f"Pacote {p.pk}",
+                "servico_nome": p.servico.nome,
+                "status": p.status,
+                "quantidade_sessoes": p.quantidade_sessoes,
+                "valor_total": str(p.valor_total),
+                "disponiveis": p.total_disponiveis,
+                "agendadas": p.total_agendadas,
+                "utilizadas": p.total_utilizadas,
+                "perdidas": p.total_perdidas,
+                "canceladas": p.total_canceladas,
+                "saldo": p.total_disponiveis,
+                "created_at": p.created_at,
+                "updated_at": p.updated_at,
+            }
+            for p in pacotes
+        ]
+
+        lista_procedimentos = [
+            {
+                "id": p.pk,
+                "agendamento_id": p.agendamento_id,
+                "servico_nome": p.servico_nome,
+                "profissional_nome": p.profissional_nome,
+                "pacote_id": p.pacote_id,
+                "pacote_nome": p.pacote_nome,
+                "sessao_id": p.sessao_id,
+                "valor": str(p.valor),
+                "duracao_minutos": p.duracao_minutos,
+                "realizado_em": p.realizado_em,
+                "origem": p.origem,
+                "status": p.status,
+                "estornado_em": p.estornado_em,
+                "motivo_estorno": p.motivo_estorno,
+            }
+            for p in procedimentos
+        ]
+
+        lista_movimentos = [
+            {
+                "id": m.pk,
+                "sessao_id": m.sessao_id,
+                "pacote_id": m.sessao.pacote_id,
+                "pacote_nome": (
+                    m.sessao.pacote.modelo.nome
+                    if m.sessao.pacote.modelo_id
+                    else f"Pacote {m.sessao.pacote_id}"
+                ),
+                "estado_anterior": m.estado_anterior,
+                "estado_novo": m.estado_novo,
+                "motivo": m.motivo,
+                "justificativa": m.justificativa,
+                "responsavel": m.usuario_executor.nome_completo if m.usuario_executor else "Sistema",
+                "agendamento_id": m.agendamento_relacionado_id,
+                "data_alteracao": m.data_alteracao,
+            }
+            for m in movimentos
+        ]
+
+        return Response({
+            "cliente_id": str(cliente.pk),
+            "resumo": {
+                "procedimentos_realizados": sum(1 for p in lista_procedimentos if p["status"] == ProcedimentoRealizado.REALIZADO),
+                "atendimentos": len(lista_agendamentos),
+                "cancelamentos": len(cancelamentos),
+                "faltas": len(faltas),
+                "pacotes": len(lista_pacotes),
+                "sessoes_utilizadas": sum(p["utilizadas"] for p in lista_pacotes),
+                "sessoes_disponiveis": sum(p["disponiveis"] for p in lista_pacotes),
+                "sessoes_perdidas": sum(p["perdidas"] for p in lista_pacotes),
+            },
+            "procedimentos": lista_procedimentos,
+            "atendimentos": lista_agendamentos,
+            "cancelamentos": cancelamentos,
+            "faltas": faltas,
+            "pacotes": lista_pacotes,
+            "movimentos_sessao": lista_movimentos,
+        })
 
     @transaction.atomic
     def perform_create(self, serializer):

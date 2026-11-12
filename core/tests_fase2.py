@@ -357,8 +357,10 @@ class FaltaAposConclusaoTests(BaseFase2):
 
         if pacote is not None:
             sessao = SessaoPacote.objects.filter(pacote=pacote).first()
-            sessao.status = SessaoPacote.UTILIZADA
+            sessao.status = SessaoPacote.AGENDADA
             sessao.agendamento = agendamento
+            sessao.save()
+            sessao.status = SessaoPacote.UTILIZADA
             sessao.save()
 
         return agendamento, sessao

@@ -15,7 +15,6 @@ from core.servicos_primeiro_acesso import (
 )
 from .base import ClinicaContextMixin
 from .permissions import (
-    IsAdmin,
     IsAdminOrSecretario,
     IsAdminOrSecretarioOuProfissionalAgenda,
 )
@@ -31,7 +30,7 @@ class ColaboradorViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
     def get_permissions(self):
         if self.request.method in ['GET', 'HEAD', 'OPTIONS']:
             return [IsAdminOrSecretarioOuProfissionalAgenda()]
-        return [IsAdmin()]
+        return [IsAdminOrSecretario()]
 
     def get_queryset(self):
         return (
@@ -71,6 +70,31 @@ class ColaboradorViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
             ip=ip or None,
             user_agent=self.request.META.get("HTTP_USER_AGENT", ""),
         )
+
+    def _validar_permissao_sobre_alvo(self, alvo, novo_role, novo_ativo):
+        logado = self.request.colaborador
+        papel = logado.role.nome
+        eh_proprio = alvo.pk == logado.pk
+
+        if alvo.role.nome == Role.ADMIN and not eh_proprio:
+            raise PermissionDenied(
+                "Administradores só podem ser alterados por eles mesmos."
+            )
+
+        if papel == Role.SECRETARIO:
+            if eh_proprio and (
+                novo_role.pk != alvo.role_id or novo_ativo != alvo.ativo
+            ):
+                raise PermissionDenied(
+                    "Somente administradores podem alterar o próprio papel "
+                    "ou se desativar."
+                )
+
+            if novo_role.nome not in (Role.PROFISSIONAL, Role.SECRETARIO):
+                raise PermissionDenied(
+                    "Secretários só podem definir os papéis Profissional "
+                    "ou Secretário em colaboradores existentes."
+                )
 
     def _validar_desativacao_profissional(self, colaborador):
         if colaborador.role.nome != Role.PROFISSIONAL:
@@ -242,6 +266,8 @@ class ColaboradorViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
         novo_role = dados.get("role", colaborador.role)
         novo_ativo = dados.get("ativo", colaborador.ativo)
 
+        self._validar_permissao_sobre_alvo(colaborador, novo_role, novo_ativo)
+
         self._validar_regras_administrador(
             colaborador,
             novo_role,
@@ -298,6 +324,12 @@ class ColaboradorViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
             raise PermissionDenied(
                 "O colaborador não pertence à clínica ativa."
             )
+
+        self._validar_permissao_sobre_alvo(
+            colaborador,
+            colaborador.role,
+            False,
+        )
 
         if colaborador.role.nome == Role.ADMIN:
             if colaborador.usuario_id != request.user.id:

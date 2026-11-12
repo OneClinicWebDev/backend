@@ -874,3 +874,48 @@ class Auditoria(models.Model):
         raise ValidationError(
             "Registros de auditoria não podem ser excluídos."
         )
+
+class PrimeiroAcessoCodigo(models.Model):
+    objects = ExclusaoFisicaBloqueadaQuerySet.as_manager()
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+    )
+    colaborador = models.ForeignKey(
+        Colaborador,
+        on_delete=models.PROTECT,
+        related_name="codigos_primeiro_acesso",
+    )
+    codigo_hash = models.CharField(max_length=255)
+    expira_em = models.DateTimeField()
+    usado_em = models.DateTimeField(null=True, blank=True)
+    invalidado_em = models.DateTimeField(null=True, blank=True)
+    tentativas_falhas = models.PositiveSmallIntegerField(default=0)
+    criado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="codigos_primeiro_acesso_gerados",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "codigos_primeiro_acesso"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(
+                fields=["colaborador", "usado_em", "invalidado_em"],
+                name="idx_primeiro_acesso_ativo",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Código de primeiro acesso {self.pk}"
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError(
+            "Códigos de primeiro acesso não podem ser excluídos fisicamente."
+        )

@@ -9,6 +9,7 @@ from .views_auth import (
     PerfilView,
 )
 from .views_cadastro import CadastroClinicaView
+from .views_primeiro_acesso import PrimeiroAcessoView
 from .views_cliente import ClienteViewSet
 from .views_colaborador import ColaboradorViewSet
 from .views_servico import ServicoViewSet
@@ -33,5 +34,6 @@ urlpatterns = [
     path("auth/perfil/", PerfilView.as_view(), name="perfil"),
     path("auth/alterar-senha/", AlterarSenhaView.as_view(), name="alterar_senha"),
     path('auth/criar-clinica/', CadastroClinicaView.as_view(), name='criar_clinica'),
+    path("auth/primeiro-acesso/", PrimeiroAcessoView.as_view(), name="primeiro_acesso"),
     path('', include(router.urls)),
 ]

@@ -4,23 +4,28 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from rest_framework import status, viewsets
+from rest_framework.decorators import action
 from rest_framework.exceptions import APIException, PermissionDenied, ValidationError
 from rest_framework.response import Response
 
 from core.models import Colaborador, Role, Agendamento, Auditoria, Usuario
+from core.servicos_primeiro_acesso import (
+    PrimeiroAcessoIndisponivel,
+    gerar_codigo_primeiro_acesso,
+)
 from .base import ClinicaContextMixin
 from .permissions import (
     IsAdmin,
     IsAdminOrSecretario,
     IsAdminOrSecretarioOuProfissionalAgenda,
 )
-from .serializers_core import ColaboradorSerializer
+from .serializers_primeiro_acesso import ColaboradorComPrimeiroAcessoSerializer
 
 logger = logging.getLogger(__name__)
 
 
 class ColaboradorViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
-    serializer_class = ColaboradorSerializer
+    serializer_class = ColaboradorComPrimeiroAcessoSerializer
     permission_classes = [IsAdminOrSecretario]
 
     def get_permissions(self):
@@ -125,6 +130,16 @@ class ColaboradorViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
                 "administrador ativo da clínica."
             )
 
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self._primeiro_acesso_gerado = None
+        self.perform_create(serializer)
+        dados = dict(serializer.data)
+        dados["primeiro_acesso"] = self._primeiro_acesso_gerado
+        headers = self.get_success_headers(serializer.data)
+        return Response(dados, status=status.HTTP_201_CREATED, headers=headers)
+
     @transaction.atomic
     def perform_create(self, serializer):
         clinica = self.get_clinica()
@@ -184,10 +199,29 @@ class ColaboradorViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
                 "detail": f"Erro ao criar colaborador ({type(exc).__name__}): {str(exc)[:240]}"
             })
 
+        primeiro_acesso = None
+
+        if not usuario.has_usable_password():
+            codigo, registro = gerar_codigo_primeiro_acesso(
+                colaborador,
+                self.request.user,
+            )
+            primeiro_acesso = {
+                "codigo": codigo,
+                "expira_em": registro.expira_em.isoformat(),
+            }
+
+        self._primeiro_acesso_gerado = primeiro_acesso
+
+        dados_auditoria = self._snapshot(colaborador)
+        dados_auditoria["codigo_primeiro_acesso_gerado"] = (
+            primeiro_acesso is not None
+        )
+
         self._registrar_auditoria(
             colaborador,
             Auditoria.CREATE,
-            dados_novos=self._snapshot(colaborador),
+            dados_novos=dados_auditoria,
         )
 
     @transaction.atomic
@@ -298,3 +332,44 @@ class ColaboradorViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
         )
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="novo-codigo-primeiro-acesso",
+    )
+    @transaction.atomic
+    def novo_codigo_primeiro_acesso(self, request, pk=None):
+        colaborador = self.get_object()
+
+        try:
+            codigo, registro = gerar_codigo_primeiro_acesso(
+                colaborador,
+                request.user,
+            )
+        except PrimeiroAcessoIndisponivel as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        expira_em = registro.expira_em.isoformat()
+
+        self._registrar_auditoria(
+            colaborador,
+            Auditoria.UPDATE,
+            dados_novos={
+                "codigo_primeiro_acesso_gerado": True,
+                "expira_em": expira_em,
+            },
+        )
+
+        return Response(
+            {
+                "primeiro_acesso": {
+                    "codigo": codigo,
+                    "expira_em": expira_em,
+                }
+            },
+            status=status.HTTP_201_CREATED,
+        )

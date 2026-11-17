@@ -566,3 +566,100 @@ class PacotesAPITestCase(APITestCase):
             response.status_code,
             status.HTTP_401_UNAUTHORIZED,
         )
+
+    def criar_modelo(self, nome="Pacote Limpeza de Pele", quantidade=3):
+        return ModeloPacote.objects.create(
+            clinica=self.clinica,
+            nome=nome,
+            servico=self.servico,
+            quantidade_sessoes=quantidade,
+            valor_total="300.00",
+            ativo=True,
+        )
+
+    def vender(self, modelo):
+        return self.client.post(
+            self.url,
+            self.payload_pacote(
+                modelo=modelo.id,
+                quantidade_sessoes=modelo.quantidade_sessoes,
+            ),
+            format="json",
+        )
+
+    def test_nao_permite_dois_pacotes_ativos_do_mesmo_modelo(self):
+        modelo = self.criar_modelo()
+
+        primeira = self.vender(modelo)
+        self.assertEqual(primeira.status_code, status.HTTP_201_CREATED)
+
+        segunda = self.vender(modelo)
+        self.assertEqual(segunda.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("modelo", segunda.data)
+        self.assertEqual(
+            Pacote.objects.filter(cliente=self.cliente, modelo=modelo).count(),
+            1,
+        )
+
+    def test_permite_modelos_diferentes_do_mesmo_procedimento(self):
+        modelo_3 = self.criar_modelo("Limpeza 3 sessões", 3)
+        modelo_5 = self.criar_modelo("Limpeza 5 sessões", 5)
+
+        self.assertEqual(self.vender(modelo_3).status_code, status.HTTP_201_CREATED)
+        self.assertEqual(self.vender(modelo_5).status_code, status.HTTP_201_CREATED)
+
+    def test_permite_novo_pacote_apos_cancelar(self):
+        modelo = self.criar_modelo()
+
+        primeira = self.vender(modelo)
+        self.assertEqual(primeira.status_code, status.HTTP_201_CREATED)
+
+        cancelar = self.client.post(
+            f"{self.url}{primeira.data['id']}/cancelar/",
+            {"motivo": "Cliente desistiu"},
+            format="json",
+        )
+        self.assertEqual(cancelar.status_code, status.HTTP_200_OK)
+
+        segunda = self.vender(modelo)
+        self.assertEqual(segunda.status_code, status.HTTP_201_CREATED)
+
+    def test_permite_novo_pacote_apos_concluir(self):
+        modelo = self.criar_modelo()
+
+        primeira = self.vender(modelo)
+        self.assertEqual(primeira.status_code, status.HTTP_201_CREATED)
+
+        Pacote.objects.filter(pk=primeira.data["id"]).update(
+            status=Pacote.CONCLUIDO
+        )
+
+        segunda = self.vender(modelo)
+        self.assertEqual(segunda.status_code, status.HTTP_201_CREATED)
+
+    def test_outro_cliente_pode_ter_o_mesmo_pacote(self):
+        modelo = self.criar_modelo()
+        usuario_outro = Usuario.objects.create_user(
+            cpf="39053344705",
+            nome_completo="Outro Cliente",
+            data_nascimento="1990-01-01",
+            password="SenhaForte123",
+        )
+        outro = Cliente.objects.create(
+            usuario=usuario_outro,
+            clinica=self.clinica,
+            telefone="47977777777",
+        )
+
+        self.assertEqual(self.vender(modelo).status_code, status.HTTP_201_CREATED)
+
+        resposta = self.client.post(
+            self.url,
+            self.payload_pacote(
+                modelo=modelo.id,
+                cliente=str(outro.id),
+                quantidade_sessoes=modelo.quantidade_sessoes,
+            ),
+            format="json",
+        )
+        self.assertEqual(resposta.status_code, status.HTTP_201_CREATED)

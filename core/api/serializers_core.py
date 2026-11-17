@@ -48,6 +48,7 @@ class ClinicaSerializer(serializers.ModelSerializer):
             field.name for field in Clinica._meta.fields
         )
 
+
 class ClinicaAtualizacaoSerializer(serializers.ModelSerializer):
     cnpj = serializers.CharField(max_length=18, trim_whitespace=True)
     telefone = serializers.CharField(max_length=20, trim_whitespace=True)
@@ -119,6 +120,7 @@ class RoleSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = fields
 
+
 class ColaboradorSerializer(serializers.ModelSerializer):
     usuario_nome = serializers.CharField(
         source="usuario.nome_completo",
@@ -135,7 +137,7 @@ class ColaboradorSerializer(serializers.ModelSerializer):
         required=False,
         allow_empty=True,
         allow_null=True,
-        write_only=True 
+        write_only=True
     )
 
     class Meta:
@@ -178,13 +180,13 @@ class ColaboradorSerializer(serializers.ModelSerializer):
                 nome_formatado = str(nome).strip().title()
                 if nome_formatado:
                     esp, _ = Especialidade.objects.get_or_create(
-                        clinica=clinica, 
+                        clinica=clinica,
                         nome=nome_formatado
                     )
                     objs.append(esp)
             colaborador.especialidades.set(objs)
         Especialidade.objects.filter(
-            clinica=colaborador.clinica, 
+            clinica=colaborador.clinica,
             profissionais__isnull=True
         ).delete()
 
@@ -205,6 +207,8 @@ class ColaboradorSerializer(serializers.ModelSerializer):
         representation = super().to_representation(instance)
         representation["especialidades"] = [esp.nome for esp in instance.especialidades.all()]
         return representation
+
+
 class ClienteSerializer(serializers.ModelSerializer):
     usuario_nome = serializers.CharField(
         source="usuario.nome_completo",
@@ -265,6 +269,7 @@ class ClienteSerializer(serializers.ModelSerializer):
     def validate_numero_endereco(self, value):
         return value.strip()
 
+
 class ServicoSerializer(serializers.ModelSerializer):
     nome = serializers.CharField(
         max_length=255,
@@ -309,6 +314,7 @@ class ServicoSerializer(serializers.ModelSerializer):
 
     def validate_descricao(self, value):
         return value.strip()
+
 
 class ModeloPacoteSerializer(serializers.ModelSerializer):
     servico_nome = serializers.CharField(
@@ -397,6 +403,8 @@ class ModeloPacoteSerializer(serializers.ModelSerializer):
             })
 
         return attrs
+
+
 class AgendamentoSerializer(serializers.ModelSerializer):
     cliente_nome = serializers.CharField(
         source="cliente.usuario.nome_completo",
@@ -585,6 +593,12 @@ class AgendamentoSerializer(serializers.ModelSerializer):
         return attrs
 
 
+MENSAGEM_PACOTE_ATIVO_DUPLICADO = (
+    "Este cliente já possui um pacote ativo deste tipo. "
+    "Conclua ou cancele o pacote atual antes de adquirir outro igual."
+)
+
+
 class PacoteSerializer(serializers.ModelSerializer):
     quantidade_sessoes = serializers.IntegerField(
         min_value=1,
@@ -639,6 +653,7 @@ class PacoteSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+        validators = []
 
     def get_saldo_sessoes(self, obj):
         return obj.saldo_sessoes
@@ -694,7 +709,7 @@ class PacoteSerializer(serializers.ModelSerializer):
 
         if cliente.status_cadastro != Cliente.ATIVO:
             raise serializers.ValidationError({
-                "cliente": "Não é possível criar um pacote para cliente inativo."
+                "cliente": "Não é possível criar un pacote para cliente inativo."
             })
 
         if self.instance is None and modelo is None:
@@ -718,7 +733,17 @@ class PacoteSerializer(serializers.ModelSerializer):
                     "modelo": "O modelo de uma aquisição existente não pode ser alterado."
                 })
 
+            if self.instance is None and Pacote.objects.filter(
+                cliente=cliente,
+                modelo=modelo,
+                status=Pacote.ATIVO,
+            ).exists():
+                raise serializers.ValidationError({
+                    "modelo": MENSAGEM_PACOTE_ATIVO_DUPLICADO
+                })
+
         return attrs
+
 
 class SessaoPacoteSerializer(serializers.ModelSerializer):
     class Meta:

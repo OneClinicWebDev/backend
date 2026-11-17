@@ -375,6 +375,13 @@ class Pacote(models.Model):
 
     class Meta:
         db_table = "pacotes"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["cliente", "modelo"],
+                condition=Q(status="ATIVO"),
+                name="uniq_pacote_ativo_por_cliente_modelo",
+            ),
+        ]
 
     @property
     def saldo_sessoes(self):

@@ -1,6 +1,6 @@
 import uuid
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 
 from rest_framework import status, viewsets
@@ -11,6 +11,7 @@ from rest_framework.response import Response
 from core.models import (
     Agendamento,
     Auditoria,
+    Cliente,
     HistoricoSessao,
     Pacote,
     SessaoPacote,
@@ -20,7 +21,7 @@ from .permissions import (
     IsAdminOrSecretario,
     IsAdminOrSecretarioOuProfissionalAgenda,
 )
-from .serializers_core import PacoteSerializer
+from .serializers_core import MENSAGEM_PACOTE_ATIVO_DUPLICADO, PacoteSerializer
 
 
 class PacoteViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
@@ -140,13 +141,28 @@ class PacoteViewSet(ClinicaContextMixin, viewsets.ModelViewSet):
                 "modelo": "Não é possível vender um modelo inativo."
             })
 
-        pacote = serializer.save(
-            clinica=self.get_clinica(),
+        cliente = serializer.validated_data["cliente"]
+
+        Cliente.objects.select_for_update().get(pk=cliente.pk)
+
+        if Pacote.objects.filter(
+            cliente=cliente,
+            modelo=modelo,
             status=Pacote.ATIVO,
-            servico=modelo.servico,
-            quantidade_sessoes=modelo.quantidade_sessoes,
-            valor_total=modelo.valor_total,
-        )
+        ).exists():
+            raise ValidationError({"modelo": MENSAGEM_PACOTE_ATIVO_DUPLICADO})
+
+        try:
+            with transaction.atomic():
+                pacote = serializer.save(
+                    clinica=self.get_clinica(),
+                    status=Pacote.ATIVO,
+                    servico=modelo.servico,
+                    quantidade_sessoes=modelo.quantidade_sessoes,
+                    valor_total=modelo.valor_total,
+                )
+        except IntegrityError:
+            raise ValidationError({"modelo": MENSAGEM_PACOTE_ATIVO_DUPLICADO})
 
         sessoes = [
             SessaoPacote(

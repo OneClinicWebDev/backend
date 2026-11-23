@@ -1,4 +1,5 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
 from rest_framework import serializers
 
 from core.models import (
@@ -17,6 +18,7 @@ from core.models import (
 
 from core.validators import (
     validar_cnpj,
+    validar_cpf,
     validar_telefone,
     validar_cep,
 )
@@ -246,10 +248,62 @@ class ClienteSerializer(serializers.ModelSerializer):
         ]
 
     def get_usuario_cpf(self, obj):
-        cpf = getattr(obj.usuario, 'cpf', None)
+        cpf = getattr(obj.usuario, "cpf", None)
         if cpf and len(cpf) == 11:
             return f"***.{cpf[3:6]}.{cpf[6:9]}-**"
         return cpf
+
+    def validate_cpf(self, value):
+        if self.instance is not None:
+            cpf_atual = self.instance.usuario.cpf
+            cpf_informado = "".join(filter(str.isdigit, value))
+            if len(cpf_informado) == 6 and cpf_informado == cpf_atual[3:9]:
+                return cpf_atual
+
+        try:
+            cpf = validar_cpf(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.messages) from exc
+
+        if self.instance is not None:
+            existentes = Usuario.objects.filter(cpf=cpf).exclude(
+                pk=self.instance.usuario_id
+            )
+            if existentes.exists():
+                raise serializers.ValidationError(
+                    "Já existe um usuário cadastrado com este CPF."
+                )
+
+        return cpf
+
+    def validate_nome_completo(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError(
+                "O nome completo é obrigatório."
+            )
+        return value
+
+    def update(self, instance, validated_data):
+        cpf = validated_data.pop("cpf", None)
+        nome_completo = validated_data.pop("nome_completo", None)
+
+        with transaction.atomic():
+            usuario = instance.usuario
+            usuario_alterado = False
+
+            if cpf is not None and cpf != usuario.cpf:
+                usuario.cpf = cpf
+                usuario_alterado = True
+
+            if nome_completo is not None and nome_completo != usuario.nome_completo:
+                usuario.nome_completo = nome_completo
+                usuario_alterado = True
+
+            if usuario_alterado:
+                usuario.save()
+
+            return super().update(instance, validated_data)
 
     def validate_telefone(self, value):
         try:
